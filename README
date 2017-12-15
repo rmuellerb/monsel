@@ -1,0 +1,7 @@
+For a default run, execute: 
+    ./monsel -f -n 10000 -v testfiles/delaunay_n10.csv
+For a continuous run, execute:
+    ./monsel -f -n 1000 -v -c testfiles/small_example_0.2/delaunay_n10_base.csv
+
+More help is available using 
+    ./monsel --help

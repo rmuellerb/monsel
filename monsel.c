@@ -5,8 +5,10 @@
 #include <math.h>
 #include <argp.h>
 
-// Externalize model change
-// Only save fitvals (+ allocate memory) if savefname is present
+// TODO: Externalize model change
+// TODO: Only save fitvals (+ allocate memory) if savefname is present
+// TODO: Integrate continuous and default version
+// TODO: Switch to base + diff files in default mode
 
 // typedefs and structs
 typedef unsigned char FitnessValues;
@@ -21,6 +23,7 @@ typedef struct Edge {
     int src;
     int dst;
     int w;
+    int active;
 } Edge;
 
 typedef struct NetworkModel {
@@ -53,10 +56,11 @@ struct ea_parameters {
     // program
     char* inputfname;
     char* savefname;
+    int filecheck;
     int verbose;
     // ea
+    int continuous;
     long popsize;
-    long generations;
     long tournsize;
     double mutpb;
     long max_evals;
@@ -71,20 +75,19 @@ struct ea_parameters {
     long pi_size;
 };
 
-const char *argp_program_version = "0.3";
+const char *argp_program_version = "0.5";
 const char *argp_program_bug_address = "<mueller-bady@linux.com>";
-static char doc[] = "Program to run (LS + PI) EA experiments and writing fitness value to given outputfile. The inputfile is given as *.csv having the format [src,dst,w].";
+static char doc[] = "Program to run (LS + PI) EA experiments and writing fitness value to given outputfile. \nIn case of the default (non-continuous) optimization, the inputfile(s) is/are given as *.csv having the format [src,dst,w].\nIn case of the continuous optimization ('-c' or '--continuous' switch), the inputfiles are given as base file (format: [E,src,dst,w] and [V,id]) and the diff files containing ids (nodes) or src and dst (edges) of elements being inactive.";
 static char args_doc[] = "[network.csv]";
 
 static struct argp_option options[] =
 {
     {0, 0, 0, 0, "EA parameters"},
     {"popsize", 'p', "POPSIZE", 0, "Size of the population (default: 100)"},
-    {"gens", 'g', "GENERATIONS", 0, "Maximum amount of evaluations (default: 1,000)"},
     {"tournsize", 't', "TOURNSIZE", 0, "Size of the tournament (default: 5)"},
     {"mutpb", 'm', "MUTPB", 0, "Mutation probability per gene (default: 0.05)"},
     {"nevals", 'n', "MAX_NEVALS", 0, "Maximum number of evaluations (default: 100,000)"},
-    {"model-change", 'z', "AMOUNT", 0, "Amount of model changes during runtime (default: 0). Requires a given base model and subsequent numbered models in the same directory, e.g., NREN_base.csv, NREN_1.csv, NREN_2.csv, etc."},
+    {"model-change", 'z', "AMOUNT", 0, "Amount of model changes during runtime (default: 0). Requires a given base model and subsequent numbered models in the same directory, e.g., NREN_base.csv, NREN_1.csv, NREN_2.csv, etc. Ignored if '-c' or '--continuous' is used."},
     {0, 0, 0, 0, "Localsearch parameters"},
     {"ls", 'l', 0, 0, "perform localsearch (default: no)"},
     {"ls_k", 'k', "K-VALUE", 0, "localsearch k-parameter (default: 0)"},
@@ -95,6 +98,8 @@ static struct argp_option options[] =
     {"pi-size", 'o', "SIZE", 0, "injection size (default: 100)"},
     {0, 0, 0, 0, "Program parameters"},
     {"verbose", 'v', 0, 0, "Switch on verbose mode (default: no)"},
+    {"filecheck", 'f', 0, 0, "Switch on model checking before run (default: no)"},
+    {"continuous", 'c', 0, 0, "Runs as continuous optimization, i.e., change model every evaluation. (default: no)"},
     {"output", 'w', "FILE", 0, "Fitness value output file (one value per line)"},
     {0}
 };
@@ -105,9 +110,10 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
     switch(key)
     {
         case 'v': params->verbose = 1; break;
+        case 'c': params->continuous = 1; break;
+        case 'f': params->filecheck = 1; break;
         case 'p': params->popsize = arg ? atol(arg) : 111; break;
         case 'w': params->savefname = arg; break;
-        case 'g': params->generations = arg ? atol(arg) : 1000; break;
         case 't': params->tournsize = arg ? atol(arg) : 5; break;
         case 'm': params->mutpb = arg ? atof(arg) : 0.05; break;
         case 'n': params->max_evals = arg ? atol(arg) : 100000; break;
@@ -137,12 +143,13 @@ char *replace_model(char *base, long netnumber)
 {
     char newnumber[10];
     sprintf(newnumber, "%d", netnumber);
-    static char buffer[4000];
+    //TODO: Buffer Overflow or errors if filenames are much longer
+    static char buffer[1000];
     char *p;
 
     if(!(p = strstr(base, "base")))  // Is 'orig' even in 'str'?
     {
-        printf("ERROR: Please give file in the format \"network_base.csv\" when using \"z\" switch\n");
+        printf("ERROR: Please give file in the format \"network_base.csv\" when using \"-z\" or \"-c\" switch\n");
         return NULL;
     }
 
@@ -183,30 +190,6 @@ int contains(int *array, int size, int value)
 }
 
 /*
- * Reads a given line and fills the content into the initialized Vertex element.
- */
-void read_vertex(Vertex *elem, char* line)
-{
-    strtok(line, ","); // Ignoring the first element ("V")
-    elem->id = atoi(strtok(NULL, ","));
-    if(strcmp(strtok(NULL, ","), "active\n") == 0)
-        elem->active = 1;
-    else
-        elem->active = 0;
-}
-
-/*
- * Reads a given line and fills the content into the initialized Edge element.
- */
-void read_edge(Edge *elem, char* line)
-{
-    strtok(line, ","); // Ignoring the first element ("E")
-    elem->src = atoi(strtok(NULL, ","));
-    elem->dst = atoi(strtok(NULL, ","));
-    elem->w = atoi(strtok(NULL, ","));
-}
-
-/*
  * Checks for the best individual in the population and returns the index to it.
  */
 long best_individual_idx(Population *pop)
@@ -221,12 +204,68 @@ long best_individual_idx(Population *pop)
 }
 
 /*
+ * Reads the diff file to a previously given model
+ * Returns the number of read diffs (vertices + edges)
+ */
+int read_diff_file(NetworkModel* model, const char* fname)
+{
+    // Set all vertices/edges to active
+    // and increase model ID
+    int i;
+    for(i=0; i<model->vcount; i++)
+        model->vertices[i].active = 1;
+    for(i=0; i<model->ecount; i++)
+        model->edges[i].active = 1;
+    model->id += 1;
+
+    // Read diff from file
+    FILE *fp;
+    char* line = NULL;
+    size_t len = 0;
+    ssize_t read;
+    int diffs = 0;
+    fp = fopen(fname, "r");
+    if (fp == NULL)
+        return -1;
+    while((read = getline(&line, &len, fp)) != -1)
+    {
+        char* class = strtok(line, ",");
+        if((*class) == 'E')
+        {
+            int src = atoi(strtok(NULL, ","));
+            int dst = atoi(strtok(NULL, ","));
+            for(i=0; i<model->ecount; i++)
+            {
+                if(model->edges[i].src == src && model->edges[i].dst == dst)
+                {
+                    model->edges[i].active = 0;
+                    diffs += 1;
+                    break;
+                }
+            }
+        }
+        else if((*class) == 'V')
+        {
+            int id = atoi(strtok(NULL, ","));
+            model->vertices[id].active = 0;
+            diffs += 1;
+        }
+        else
+            printf("WARNING: Read line without prefix 'E' or 'V'\n");
+    }
+    fclose(fp);
+    if(line) free(line);
+    //printf("Read network model '%d' diff with %d diffs\n", model->id, diffs);
+    return diffs;
+}
+
+/*
  * Reads the given file according to its filename and fills the edges into the NetworkModel.
  * The model will be filled with the number of vertices (vcount) the number of edges (ecount),
- * an array of edges containing edge information (src, dst, weight) and an array of vertices.
+ * an array of edges containing edge information (src, dst, weight, active) and an array of vertices.
  * Returns the number of lines read or -1 in case of failure
  */
-int read_file(NetworkModel *model, const char* fname)
+int read_full_file(NetworkModel *model, const char* fname)
 {
     FILE *fp;
     char * line = NULL;
@@ -243,7 +282,7 @@ int read_file(NetworkModel *model, const char* fname)
         else
             vcount++;
     }
-    model->id = 0;
+    model->id = -1;
     model->ecount = ecount;
     model->vcount = vcount;
     rewind(fp);
@@ -252,10 +291,29 @@ int read_file(NetworkModel *model, const char* fname)
     Edge *edges;
     edges = malloc(sizeof(Edge) * ecount);
     while ((read = getline(&line, &len, fp)) != -1) {
-        if(line[0] == 'E')
-            read_edge(&edges[i++], line);
-        else
-            read_vertex(&vertices[j++], line);
+        char* class = strtok(line, ",");
+        if((*class) == 'E')
+        {
+            edges[i].active = 1;
+            edges[i].src = atoi(strtok(NULL, ","));
+            edges[i].dst = atoi(strtok(NULL, ","));
+            edges[i].w = atoi(strtok(NULL, ","));
+            i++;
+        }
+        else if((*class) == 'V')
+        {
+            vertices[j].id = atoi(strtok(NULL, ","));
+            if((tmp = strtok(NULL, ",")) != NULL)
+            {
+                if(strcmp(tmp, "active\n") == 0)
+                    vertices[j].active = 1;
+                else
+                    vertices[j].active = 0;
+            }
+            else
+                vertices[j].active = 1;
+            j++;
+        }
     }
     model->edges = edges;
     model->vertices = vertices;
@@ -328,7 +386,8 @@ int penalty(Individual *ind, NetworkModel *model)
     {
         if(ind->values[model->edges[i].src] == 0 && ind->values[model->edges[i].dst] == 0)
         {
-            pen = pen + (factor * model->edges[i].w);
+            if(model->edges[i].active)
+                pen = pen + (factor * model->edges[i].w);
         }
     }
     return pen;
@@ -419,18 +478,23 @@ void print_config(struct ea_parameters *params)
     printf("\tInputfile:\t\t%s\n", params->inputfname);
     printf("\tOutputfile:\t\t%s\n", params->savefname ? params->savefname : "not saved");
     printf("\tPopsize:\t\t%d\n", params->popsize);
-    printf("\tGenerations:\t\t%d\n", params->generations);
     printf("\tTournsize:\t\t%d\n", params->tournsize);
     printf("\tMutationprob:\t\t%.4f\n", params->mutpb);
     printf("\tMax evals:\t\t%d\n", params->max_evals);
     printf("\tModel changes:\t\t%d\n", params->model_changes);
     printf("\tVerbose:\t\t%s\n", params->verbose ? "yes" : "no");
+    printf("\tFilecheck:\t\t%s\n", params->filecheck ? "yes" : "no");
+    printf("\tContinuous:\t\t%s\n", params->continuous ? "yes" : "no");
     printf("\tLocalsearch:\t\t%s\n", params->do_localsearch ? "yes" : "no");
-    printf("\tLocalsearch k-value:\t%d\n", params->ls_k );
-    printf("\tPopulation Injection:\t%s\n", params->do_pi ? "yes" : "no");
-    printf("\tInjection width:\t%d\n", params->pi_width);
-    printf("\tInjection threshold:\t%.4f\n", params->pi_threshold);
-    printf("\tInjection size:\t\t%d\n", params->pi_size);
+    if(params->do_localsearch)
+        printf("\tLocalsearch k-value:\t%d\n", params->ls_k );
+    printf("\tPopulation Injection:\t%s\n", params->do_pi ? "yes" : "no");    
+    if(params->do_pi)
+    {
+        printf("\tInjection width:\t%d\n", params->pi_width);
+        printf("\tInjection threshold:\t%.4f\n", params->pi_threshold);
+        printf("\tInjection size:\t\t%d\n", params->pi_size);
+    }
     printf("</Experiment parameters>\n");
 }
 
@@ -622,7 +686,7 @@ void print_model(NetworkModel *model)
     printf("\t</Vertices>\n");
     printf("\t<Edges>\n");
     for(i=0; i<model->ecount; i++)
-        printf("\t\t<Edge src=%d dst=%d w=%d />\n", model->edges[i].src, model->edges[i].dst, model->edges[i].w);
+        printf("\t\t<Edge src=%d dst=%d w=%d active=%d/>\n", model->edges[i].src, model->edges[i].dst, model->edges[i].w, model->edges[i].active);
     printf("\t</Edges>\n");
     printf("</NetworkModel>\n");
 }
@@ -645,23 +709,47 @@ int cleanup(Population *pop, NetworkModel *model, Fitness *fitvals, Diversity *d
  * Performs check if all necessary files are present (from basefile_0 to basefile_[changes])
  * Returns 1 if all files are accessible and have a proper format, -1 otherwise
  */
-int check_model_files(char* basefile, int changes, int verbose)
+int check_model_files(char* basefile, int changes, int verbose, int continuous)
 {
+    //TODO: Just copied, refactor!
     int i;
+    int check;
+    // First read basefile
+    NetworkModel base;
+    if(read_full_file(&base, basefile) == -1)
+    {
+        if(verbose)
+            printf("ERROR: Reading file \"%s\" failed!\n", basefile);
+        free_model(&base);
+        return -1;
+    }
+    // Then, check all other files
     for(i=0; i<=changes; i++)
     {
-        NetworkModel model;
         char* fname = replace_model(basefile, i);
         if(!fname)
+        {
+            free_model(&base);
             return -1;
-        if(read_file(&model, fname) == -1)
+        }
+
+        if(continuous)
+            check = read_diff_file(&base, fname);
+        else
+        {
+            NetworkModel model;
+            check = read_full_file(&model, fname);
+            free_model(&model);
+        }
+        if(check == -1)
         {
             if(verbose)
                 printf("ERROR: Reading file \"%s\" failed!\n", fname);
+            free_model(&base);
             return -1;
         }
-        free_model(&model);
     }
+    free_model(&base);
     return 1;
 }
 
@@ -682,7 +770,7 @@ int pi_necessary(Diversity *div, double threshold)
  * number of evaluations of the LS method or use it for further processing.
  * Returns in case we have a model change or the maximum number of allowed evaluations is hit.
  */
-long localsearch(Individual *ind, int k, NetworkModel *model, Fitness *fitvals, long nevals, long max_evals, long change_evals)
+long localsearch(Individual *ind, int k, NetworkModel *model, Fitness *fitvals, long nevals, long max_evals, long change_evals, int continuous, char* inputfname)
 {
     if(ind->size < k)
     {
@@ -701,6 +789,8 @@ long localsearch(Individual *ind, int k, NetworkModel *model, Fitness *fitvals, 
         {
             ind->values[neighbors[i]] = !ind->values[neighbors[i]];
             Fitness fit = fitness(ind, model);
+            if(continuous)
+                read_diff_file(model, replace_model(inputfname, model->id + 1));
             if(fitvals)
                 fitvals[nevals++] = fit;
             else
@@ -713,66 +803,296 @@ long localsearch(Individual *ind, int k, NetworkModel *model, Fitness *fitvals, 
                 best_fitness = fit;
                 foundbetter = 1;
             }
-            if(nevals >= max_evals || (nevals % change_evals) == 0)
-                return nevals;
+            // TODO: Following statement is improvable
+            if(continuous)
+            {
+                if(nevals >= max_evals)
+                    return nevals;
+            }
+            else
+            {
+                if(nevals >= max_evals || (nevals % change_evals) == 0)
+                    return nevals;
+            }                
         }
     }while(foundbetter);
     return nevals;
 }
 
-int main(int argc, char**argv)
+/*
+ * Runs the continuous version of the monitor selection optimizer
+ */
+int run_continuous(struct ea_parameters* params)
 {
     long i = 0;
-    srand(time(NULL));
-
-    struct ea_parameters params;
-    params.inputfname = NULL;
-    params.savefname = NULL;
-    params.popsize = 100;
-    params.generations = 99999999;
-    params.tournsize = 5;
-    params.mutpb = 0.05;
-    params.max_evals = 100000;
-    params.model_changes = 0;
-    params.verbose = 0;
-    params.do_localsearch = 0;
-    params.ls_k = 50;
-    params.do_pi = 0;
-    params.pi_width = 1;
-    params.pi_threshold = 0.0;
-    params.pi_size = 100;
-
-    argp_parse(&argp, argc, argv, 0, 0, &params);
-    long change_eval;
-    char *current_model_fname;
-    if(params.model_changes == 0)
-    {
-        change_eval = params.max_evals+1;
-        current_model_fname = params.inputfname;
-    }
-    else
-    {
-        if(check_model_files(params.inputfname, params.model_changes, params.verbose) == -1)
+    if(params->filecheck)
+    {    
+        if(params->verbose)
+            printf("checking model files...\n");
+        if(check_model_files(params->inputfname, params->max_evals, params->verbose, params->continuous) == -1)
         {
             printf("ERROR: not all files are present, aborting!\n");
             exit(EXIT_FAILURE);
         }
-        change_eval = (int)(params.max_evals / params.model_changes);
-        current_model_fname = replace_model(params.inputfname, 0);
+    }
+    NetworkModel model;
+    if(read_full_file(&model, params->inputfname) == -1)
+    {
+        printf("Error reading file '%s', aborting\n", params->inputfname);
+        exit(EXIT_FAILURE);
+    }
+    if(model.ecount == 0 || model.vcount == 0)
+    {
+        printf("Either no edge or vertex in file '%s', aborting\n", params->inputfname);
+        exit(EXIT_FAILURE);
+    }
+    if(read_diff_file(&model, replace_model(params->inputfname, 0)) == -1)
+    {
+        printf("Error reading file '%s', aborting\n", replace_model(params->inputfname, 0));
+        exit(EXIT_FAILURE);
+    }
+    if(params->verbose)
+    {
+        print_config(params);
+        int active = 0;
+        int k;
+        for(k=0; k<model.vcount; k++)
+            if(model.vertices[k].active)
+                active++;
+        printf("Read file '%s' having |V| = %d (%d active), |E| = %d @ %d evals\n", replace_model(params->inputfname, 0), model.vcount, active, model.ecount, 0);
+    }
+    Fitness *fitvals = NULL;
+    if(params->savefname)
+        fitvals = malloc(sizeof(Fitness) * params->max_evals);
+    int nevals = 0;
+    Population pop;
+    pop._memsize = params->popsize + params->popsize + params->pi_size;
+    pop.size = 0;
+    pop.ind = malloc(sizeof(Individual) * pop._memsize);
+    time_t run_start_time = time(NULL);
+    //#pragma omp parallel for
+    for(i=0; i<params->popsize; i++)
+    {
+        Individual ind;
+        create_random_individual(&ind, model.vcount);
+        ind.fitness = fitness(&ind, &model);
+        read_diff_file(&model, replace_model(params->inputfname, model.id + 1));
+        if(params->savefname)
+            fitvals[nevals++] = ind.fitness;
+        else
+            nevals++;
+        pop.ind[pop.size++] = ind;
+    }
+    // Variables for PI
+    Diversity diversity;
+    if(params->do_pi)
+    {
+        diversity._memsize = params->pi_width;
+        diversity.values = malloc(sizeof(Fitness) * diversity._memsize);
+        int k;
+        for(k=0; k<diversity._memsize; k++)
+            diversity.values[k] = 0;
+        diversity.next = 0;
+    }
+
+    // print initial population statistics
+    if(params->verbose)
+        print_stats(&pop, 0, nevals, 0, params->do_localsearch, 0);
+
+    long pi_triggered = 0;
+    // start of the generational process
+    for(i=0; ; i++)
+    {
+        int j;
+        int injected = 0;
+        long ls_nevals = 0;
+        // local search
+        if(params->do_localsearch)
+        {
+            if(nevals >= params->max_evals)
+            {
+                if(params->verbose)
+                {
+                    printf("Final: ");
+                    print_stats(&pop, i+1, nevals, ls_nevals, params->do_localsearch, injected);
+                    printf("Reached %d evaluations, quitting after %d seconds\n", nevals, time(NULL) - run_start_time);
+                }
+                if(params->savefname) 
+                {
+                    write_meta_header(time(NULL) - run_start_time, pi_triggered, params->savefname);
+                    write_fitness(fitvals, nevals, params->savefname);
+                }
+                cleanup(&pop, &model, fitvals, &diversity);
+                return 0;
+            }
+            long idx = best_individual_idx(&pop);
+            ls_nevals = nevals;
+            nevals = localsearch(&pop.ind[idx], params->ls_k, &model, fitvals, nevals, params->max_evals, 1, params->continuous, params->inputfname);
+            ls_nevals = nevals - ls_nevals;
+        }
+        // choose parents and perform crossover + mutation on children
+        for(j=0; j<params->popsize; j = j + 2)
+        {
+            if(nevals >= params->max_evals)
+            {
+                if(params->verbose)
+                {
+                    printf("Final: ");
+                    print_stats(&pop, i+1, nevals, ls_nevals, params->do_localsearch, injected);
+                    printf("Reached %d evaluations, quitting after %d seconds\n", nevals, time(NULL) - run_start_time);
+                }
+                if(params->savefname) 
+                {
+                    write_meta_header(time(NULL) - run_start_time, pi_triggered, params->savefname);
+                    write_fitness(fitvals, nevals, params->savefname);
+                }
+                cleanup(&pop, &model, fitvals, &diversity);
+                return 0;
+            }
+            int p1;
+            int p2;
+            do
+            {
+                p1 = tournament_selection(&pop, params->tournsize);
+                p2 = tournament_selection(&pop, params->tournsize);
+            }
+            while(p1 == p2);
+            Individual c1;
+            create_null_individual(&c1, model.vcount);
+            Individual c2;
+            create_null_individual(&c2, model.vcount);
+            uniform_crossover(&pop.ind[p1], &pop.ind[p2], &c1, &c2);
+            bitflip_mutation(&c1, params->mutpb);
+            bitflip_mutation(&c2, params->mutpb);
+            c1.fitness = fitness(&c1, &model);
+            read_diff_file(&model, replace_model(params->inputfname, model.id + 1));
+            if(params->savefname)
+                fitvals[nevals++] = c1.fitness;
+            else
+                nevals++;
+            pop.ind[pop.size++] = c1;
+            if(nevals >= params->max_evals)
+            {
+                if(params->verbose)
+                {
+                    printf("Final: ");
+                    print_stats(&pop, i+1, nevals, ls_nevals, params->do_localsearch, injected);
+                    printf("Reached %d evaluations, quitting after %d seconds\n", nevals, time(NULL) - run_start_time);
+                }
+                if(params->savefname) 
+                {
+                    write_meta_header(time(NULL) - run_start_time, pi_triggered, params->savefname);
+                    write_fitness(fitvals, nevals, params->savefname);
+                }
+                cleanup(&pop, &model, fitvals, &diversity);
+                return 0;
+            }
+            c2.fitness = fitness(&c2, &model);
+            read_diff_file(&model, replace_model(params->inputfname, model.id + 1));
+            if(params->savefname)
+                fitvals[nevals++] = c2.fitness;
+            else
+                nevals++;
+            pop.ind[pop.size++] = c2;
+        }
+        // Determine survivor indices using selection operation
+        // TODO: How to ensure uniqueness? Floyd Algorithm?
+        int surv_idx[params->popsize];
+        for(j=0; j<params->popsize; j++)
+        {
+            int s;
+            do
+            {
+                s = tournament_selection(&pop, params->tournsize);
+            }
+            while(contains(surv_idx, j, s));
+            surv_idx[j] = s;
+        }
+        // pick survivors from the population and free dying individuals memory
+        for(j=pop.size-1; j>=0; j--)
+        {
+            if(!contains(surv_idx, params->popsize, j))
+            {
+                free_individual(&pop.ind[j]);
+                if(j != pop.size-1)
+                    pop.ind[j] = pop.ind[pop.size-1];
+                pop.size--;
+            }
+        }
+        // Place for possible population injection
+        if(params->do_pi)
+        {
+            diversity.values[diversity.next++] = population_fitness_stdev(&pop);
+            diversity.next = diversity.next % diversity._memsize;
+            if(pi_necessary(&diversity, params->pi_threshold))
+            {
+                pi_triggered += 1;
+                int k;
+                for(k=0; k<params->pi_size; k++)
+                {
+                    if(nevals >= params->max_evals)
+                        break;
+                    Individual ind;
+                    create_random_individual(&ind, model.vcount);
+                    ind.fitness = fitness(&ind, &model);
+                    read_diff_file(&model, replace_model(params->inputfname, model.id + 1));
+                    if(params->savefname)
+                        fitvals[nevals++] = ind.fitness;
+                    else
+                        nevals++;
+                    pop.ind[pop.size++] = ind;
+                    injected++;
+                    if(nevals >= params->max_evals)
+                        break;
+                }    
+            }
+        }
+        // print statistics of the generation
+        if(params->verbose) 
+            print_stats(&pop, i+1, nevals, ls_nevals, params->do_localsearch, injected);
+    }
+    return 0;
+}
+
+/*
+ * Runs the default version of the monitor selection optimizer
+ */
+int run_default(struct ea_parameters* params)
+{
+    long i = 0;
+    long change_eval;
+    char *current_model_fname;
+    if(params->model_changes == 0)
+    {
+        change_eval = params->max_evals+1;
+        current_model_fname = params->inputfname;
+    }
+    else
+    {
+        if(params->filecheck)
+        {
+            if(check_model_files(params->inputfname, params->model_changes, params->verbose, params->continuous) == -1)
+            {
+                printf("ERROR: not all files are present, aborting!\n");
+                exit(EXIT_FAILURE);
+            }
+        }
+        change_eval = (int)(params->max_evals / params->model_changes);
+        current_model_fname = replace_model(params->inputfname, 0);
         if(!current_model_fname)
         {
             printf("ERROR: Reading file failed, aborting.\n");
             exit(EXIT_FAILURE);
         }
     }
-    if(change_eval <= params.popsize)
+    if(change_eval <= params->popsize)
     {
         printf("ERROR: popsize is larger than model change size. Reevaluation will cost all evaluations, no LS/EA is possible. Aborting\n");
         exit(EXIT_FAILURE);
     }
 
     NetworkModel model;
-    if(read_file(&model, current_model_fname) == -1)
+    if(read_full_file(&model, current_model_fname) == -1)
     {
         printf("Error reading file '%s', aborting\n", current_model_fname);
         exit(EXIT_FAILURE);
@@ -782,9 +1102,9 @@ int main(int argc, char**argv)
         printf("Either no edge or vertex in file '%s', aborting\n", current_model_fname);
         exit(EXIT_FAILURE);
     }
-    if(params.verbose)
+    if(params->verbose)
     {
-        print_config(&params);
+        print_config(params);
         int active = 0;
         int k;
         for(k=0; k<model.vcount; k++)
@@ -794,21 +1114,21 @@ int main(int argc, char**argv)
     }
 
     Fitness *fitvals = NULL;
-    if(params.savefname)
-        fitvals = malloc(sizeof(Fitness) * params.max_evals);
+    if(params->savefname)
+        fitvals = malloc(sizeof(Fitness) * params->max_evals);
     int nevals = 0;
     Population pop;
-    pop._memsize = params.popsize + params.popsize + params.pi_size;
+    pop._memsize = params->popsize + params->popsize + params->pi_size;
     pop.size = 0;
     pop.ind = malloc(sizeof(Individual) * pop._memsize);
     time_t run_start_time = time(NULL);
     //#pragma omp parallel for
-    for(i=0; i<params.popsize; i++)
+    for(i=0; i<params->popsize; i++)
     {
         Individual ind;
         create_random_individual(&ind, model.vcount);
         ind.fitness = fitness(&ind, &model);
-        if(params.savefname)
+        if(params->savefname)
             fitvals[nevals++] = ind.fitness;
         else
             nevals++;
@@ -816,9 +1136,9 @@ int main(int argc, char**argv)
     }
     // Variables for PI
     Diversity diversity;
-    if(params.do_pi)
+    if(params->do_pi)
     {
-        diversity._memsize = params.pi_width;
+        diversity._memsize = params->pi_width;
         diversity.values = malloc(sizeof(Fitness) * diversity._memsize);
         int k;
         for(k=0; k<diversity._memsize; k++)
@@ -827,46 +1147,46 @@ int main(int argc, char**argv)
     }
 
     // print initial population statistics
-    if(params.verbose)
-        print_stats(&pop, 0, nevals, 0, params.do_localsearch, 0);
+    if(params->verbose)
+        print_stats(&pop, 0, nevals, 0, params->do_localsearch, 0);
 
     long pi_triggered = 0;
     // start of the generational process
-    for(i=0; i<params.generations; i++)
+    for(i=0; ; i++)
     {
         int j;
         int injected = 0;
         long ls_nevals = 0;
         // local search
-        if(params.do_localsearch)
+        if(params->do_localsearch)
         {
-            if(nevals >= params.max_evals)
+            if(nevals >= params->max_evals)
             {
-                if(params.verbose)
+                if(params->verbose)
                 {
                     printf("Final: ");
-                    print_stats(&pop, i+1, nevals, ls_nevals, params.do_localsearch, injected);
+                    print_stats(&pop, i+1, nevals, ls_nevals, params->do_localsearch, injected);
                     printf("Reached %d evaluations, quitting after %d seconds\n", nevals, time(NULL) - run_start_time);
                 }
-                if(params.savefname) 
+                if(params->savefname) 
                 {
-                    write_meta_header(time(NULL) - run_start_time, pi_triggered, params.savefname);
-                    write_fitness(fitvals, nevals, params.savefname);
+                    write_meta_header(time(NULL) - run_start_time, pi_triggered, params->savefname);
+                    write_fitness(fitvals, nevals, params->savefname);
                 }
                 cleanup(&pop, &model, fitvals, &diversity);
                 return 0;
             }
             long idx = best_individual_idx(&pop);
             ls_nevals = nevals;
-            nevals = localsearch(&pop.ind[idx], params.ls_k, &model, fitvals, nevals, params.max_evals, change_eval);
+            nevals = localsearch(&pop.ind[idx], params->ls_k, &model, fitvals, nevals, params->max_evals, change_eval, params->continuous, params->inputfname);
             ls_nevals = nevals - ls_nevals;
         }
         if((nevals % change_eval) == 0)
         {
             int next_model = (int)(nevals / change_eval);
-            current_model_fname = replace_model(params.inputfname, next_model);
+            current_model_fname = replace_model(params->inputfname, next_model);
             free_model(&model);
-            if(read_file(&model, current_model_fname) == -1)
+            if(read_full_file(&model, current_model_fname) == -1)
             {   
                 printf("Error reading file '%s', aborting\n", current_model_fname);
                 exit(EXIT_FAILURE);
@@ -876,7 +1196,7 @@ int main(int argc, char**argv)
                 printf("Either no edge or vertex in file '%s', aborting\n", current_model_fname);
                 exit(EXIT_FAILURE);
             }   
-            if(params.verbose)
+            if(params->verbose)
             {   
                 int active = 0;
                 int k;
@@ -887,30 +1207,30 @@ int main(int argc, char**argv)
             int k;
             for(k=0; k<pop.size; k++)
             {
-                if(nevals >= params.max_evals)
+                if(nevals >= params->max_evals)
                     break;
                 pop.ind[k].fitness = fitness(&pop.ind[k], &model);
-                if(params.savefname)
+                if(params->savefname)
                     fitvals[nevals++] = pop.ind[k].fitness;
                 else
                     nevals++;
             }
         }
         // choose parents and perform crossover + mutation on children
-        for(j=0; j<params.popsize; j = j + 2)
+        for(j=0; j<params->popsize; j = j + 2)
         {
-            if(nevals >= params.max_evals)
+            if(nevals >= params->max_evals)
             {
-                if(params.verbose)
+                if(params->verbose)
                 {
                     printf("Final: ");
-                    print_stats(&pop, i+1, nevals, ls_nevals, params.do_localsearch, injected);
+                    print_stats(&pop, i+1, nevals, ls_nevals, params->do_localsearch, injected);
                     printf("Reached %d evaluations, quitting after %d seconds\n", nevals, time(NULL) - run_start_time);
                 }
-                if(params.savefname) 
+                if(params->savefname) 
                 {
-                    write_meta_header(time(NULL) - run_start_time, pi_triggered, params.savefname);
-                    write_fitness(fitvals, nevals, params.savefname);
+                    write_meta_header(time(NULL) - run_start_time, pi_triggered, params->savefname);
+                    write_fitness(fitvals, nevals, params->savefname);
                 }
                 cleanup(&pop, &model, fitvals, &diversity);
                 return 0;
@@ -919,8 +1239,8 @@ int main(int argc, char**argv)
             int p2;
             do
             {
-                p1 = tournament_selection(&pop, params.tournsize);
-                p2 = tournament_selection(&pop, params.tournsize);
+                p1 = tournament_selection(&pop, params->tournsize);
+                p2 = tournament_selection(&pop, params->tournsize);
             }
             while(p1 == p2);
             Individual c1;
@@ -928,10 +1248,10 @@ int main(int argc, char**argv)
             Individual c2;
             create_null_individual(&c2, model.vcount);
             uniform_crossover(&pop.ind[p1], &pop.ind[p2], &c1, &c2);
-            bitflip_mutation(&c1, params.mutpb);
-            bitflip_mutation(&c2, params.mutpb);
+            bitflip_mutation(&c1, params->mutpb);
+            bitflip_mutation(&c2, params->mutpb);
             c1.fitness = fitness(&c1, &model);
-            if(params.savefname)
+            if(params->savefname)
                 fitvals[nevals++] = c1.fitness;
             else
                 nevals++;
@@ -940,9 +1260,9 @@ int main(int argc, char**argv)
             if((nevals % change_eval) == 0)
             {
                 int next_model = (int)(nevals / change_eval);
-                current_model_fname = replace_model(params.inputfname, next_model);
+                current_model_fname = replace_model(params->inputfname, next_model);
                 free_model(&model);
-                if(read_file(&model, current_model_fname) == -1)
+                if(read_full_file(&model, current_model_fname) == -1)
                 {   
                     printf("Error reading file '%s', aborting\n", current_model_fname);
                     exit(EXIT_FAILURE);
@@ -952,7 +1272,7 @@ int main(int argc, char**argv)
                     printf("Either no edge or vertex in file '%s', aborting\n", current_model_fname);
                     exit(EXIT_FAILURE);
                 }   
-                if(params.verbose)
+                if(params->verbose)
                 {   
                     int active = 0;
                     int k;
@@ -963,33 +1283,33 @@ int main(int argc, char**argv)
                 int k;
                 for(k=0; k<pop.size; k++)
                 {
-                    if(nevals >= params.max_evals)
+                    if(nevals >= params->max_evals)
                         break;
                     pop.ind[k].fitness = fitness(&pop.ind[k], &model);
-                    if(params.savefname)
+                    if(params->savefname)
                         fitvals[nevals++] = pop.ind[k].fitness;
                     else
                         nevals++;
                 }
             }
-            if(nevals >= params.max_evals)
+            if(nevals >= params->max_evals)
             {
-                if(params.verbose)
+                if(params->verbose)
                 {
                     printf("Final: ");
-                    print_stats(&pop, i+1, nevals, ls_nevals, params.do_localsearch, injected);
+                    print_stats(&pop, i+1, nevals, ls_nevals, params->do_localsearch, injected);
                     printf("Reached %d evaluations, quitting after %d seconds\n", nevals, time(NULL) - run_start_time);
                 }
-                if(params.savefname) 
+                if(params->savefname) 
                 {
-                    write_meta_header(time(NULL) - run_start_time, pi_triggered, params.savefname);
-                    write_fitness(fitvals, nevals, params.savefname);
+                    write_meta_header(time(NULL) - run_start_time, pi_triggered, params->savefname);
+                    write_fitness(fitvals, nevals, params->savefname);
                 }
                 cleanup(&pop, &model, fitvals, &diversity);
                 return 0;
             }
             c2.fitness = fitness(&c2, &model);
-            if(params.savefname)
+            if(params->savefname)
                 fitvals[nevals++] = c2.fitness;
             else
                 nevals++;
@@ -998,9 +1318,9 @@ int main(int argc, char**argv)
             if((nevals % change_eval) == 0)
             {
                 int next_model = (int)(nevals / change_eval);
-                current_model_fname = replace_model(params.inputfname, next_model);
+                current_model_fname = replace_model(params->inputfname, next_model);
                 free_model(&model);
-                if(read_file(&model, current_model_fname) == -1)
+                if(read_full_file(&model, current_model_fname) == -1)
                 {
                     printf("Error reading file '%s', aborting\n", current_model_fname);
                     exit(EXIT_FAILURE);
@@ -1010,7 +1330,7 @@ int main(int argc, char**argv)
                     printf("Either no edge or vertex in file '%s', aborting\n", current_model_fname);
                     exit(EXIT_FAILURE);
                 }
-                if(params.verbose)
+                if(params->verbose)
                 {
                     int active = 0;
                     int k;
@@ -1021,10 +1341,10 @@ int main(int argc, char**argv)
                 int k;
                 for(k=0; k<pop.size; k++)
                 {
-                    if(nevals >= params.max_evals)
+                    if(nevals >= params->max_evals)
                         break;
                     pop.ind[k].fitness = fitness(&pop.ind[k], &model);
-                    if(params.savefname)
+                    if(params->savefname)
                         fitvals[nevals++] = pop.ind[k].fitness;
                     else
                         nevals++;
@@ -1033,13 +1353,13 @@ int main(int argc, char**argv)
         }
         // Determine survivor indices using selection operation
         // TODO: How to ensure uniqueness? Floyd Algorithm?
-        int surv_idx[params.popsize];
-        for(j=0; j<params.popsize; j++)
+        int surv_idx[params->popsize];
+        for(j=0; j<params->popsize; j++)
         {
             int s;
             do
             {
-                s = tournament_selection(&pop, params.tournsize);
+                s = tournament_selection(&pop, params->tournsize);
             }
             while(contains(surv_idx, j, s));
             surv_idx[j] = s;
@@ -1047,7 +1367,7 @@ int main(int argc, char**argv)
         // pick survivors from the population and free dying individuals memory
         for(j=pop.size-1; j>=0; j--)
         {
-            if(!contains(surv_idx, params.popsize, j))
+            if(!contains(surv_idx, params->popsize, j))
             {
                 free_individual(&pop.ind[j]);
                 if(j != pop.size-1)
@@ -1056,36 +1376,36 @@ int main(int argc, char**argv)
             }
         }
         // Place for possible population injection
-        if(params.do_pi)
+        if(params->do_pi)
         {
             diversity.values[diversity.next++] = population_fitness_stdev(&pop);
             diversity.next = diversity.next % diversity._memsize;
-            if(pi_necessary(&diversity, params.pi_threshold))
+            if(pi_necessary(&diversity, params->pi_threshold))
             {
                 pi_triggered += 1;
                 int k;
-                for(k=0; k<params.pi_size; k++)
+                for(k=0; k<params->pi_size; k++)
                 {
-                    if(nevals >= params.max_evals)
+                    if(nevals >= params->max_evals)
                         break;
                     Individual ind;
                     create_random_individual(&ind, model.vcount);
                     ind.fitness = fitness(&ind, &model);
-                    if(params.savefname)
+                    if(params->savefname)
                         fitvals[nevals++] = ind.fitness;
                     else
                         nevals++;
                     pop.ind[pop.size++] = ind;
                     injected++;
-                    if(nevals >= params.max_evals)
+                    if(nevals >= params->max_evals)
                         break;
                     // model change
                     if((nevals % change_eval) == 0)
                     {
                         int next_model = (int)(nevals / change_eval);
-                        current_model_fname = replace_model(params.inputfname, next_model);
+                        current_model_fname = replace_model(params->inputfname, next_model);
                         free_model(&model);
-                        if(read_file(&model, current_model_fname) == -1)
+                        if(read_full_file(&model, current_model_fname) == -1)
                         {    
                             printf("Error reading file '%s', aborting\n", current_model_fname);
                             exit(EXIT_FAILURE);
@@ -1095,7 +1415,7 @@ int main(int argc, char**argv)
                             printf("Either no edge or vertex in file '%s', aborting\n", current_model_fname);
                             exit(EXIT_FAILURE);
                         }    
-                        if(params.verbose)
+                        if(params->verbose)
                         {    
                             int active = 0; 
                             int k;
@@ -1106,10 +1426,10 @@ int main(int argc, char**argv)
                         int k;
                         for(k=0; k<pop.size; k++) 
                         {    
-                            if(nevals >= params.max_evals)
+                            if(nevals >= params->max_evals)
                                 break;
                             pop.ind[k].fitness = fitness(&pop.ind[k], &model);
-                            if(params.savefname)
+                            if(params->savefname)
                                 fitvals[nevals++] = pop.ind[k].fitness;
                             else
                                 nevals++;
@@ -1119,8 +1439,36 @@ int main(int argc, char**argv)
             }
         }
         // print statistics of the generation
-        if(params.verbose) 
-            print_stats(&pop, i+1, nevals, ls_nevals, params.do_localsearch, injected);
+        if(params->verbose) 
+            print_stats(&pop, i+1, nevals, ls_nevals, params->do_localsearch, injected);
     }
     return 0;
+}
+
+int main(int argc, char**argv)
+{
+    srand(time(NULL));
+    struct ea_parameters params;
+    params.inputfname = NULL;
+    params.savefname = NULL;
+    params.popsize = 100;
+    params.tournsize = 5;
+    params.mutpb = 0.05;
+    params.max_evals = 100000;
+    params.model_changes = 0;
+    params.verbose = 0;
+    params.filecheck = 0;
+    params.continuous = 0;
+    params.do_localsearch = 0;
+    params.ls_k = 50;
+    params.do_pi = 0;
+    params.pi_width = 1;
+    params.pi_threshold = 0.0;
+    params.pi_size = 100;
+
+    argp_parse(&argp, argc, argv, 0, 0, &params);
+    if(params.continuous)
+       run_continuous(&params);
+    else
+       run_default(&params);
 }
