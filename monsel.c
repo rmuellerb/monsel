@@ -142,7 +142,7 @@ static struct argp argp = {options, parse_opt, args_doc, doc};
 char *replace_model(char *base, long netnumber)
 {
     char newnumber[10];
-    sprintf(newnumber, "%d", netnumber);
+    sprintf(newnumber, "%ld", netnumber);
     //TODO: Buffer Overflow or errors if filenames are much longer
     static char buffer[1000];
     char *p;
@@ -164,7 +164,6 @@ char *replace_model(char *base, long netnumber)
 void distinct_random_values(int *values, long size)
 {
     long i;
-    long max = size-1;
     for(i=0; i<size; i++)
         values[i] = i;
     for(i=size-1; i>=0; i--)
@@ -330,14 +329,13 @@ int read_full_file(NetworkModel *model, const char* fname)
 int write_meta_header(time_t timing, int pi_trigger, char* fname)
 {
     FILE *f;
-    long i;
     f = fopen(fname, "a");
     if(f==NULL)
     {
         printf("Unable to open file '%s' for writing.\n", fname);
         return -1;
     }
-    fprintf(f, "%d,%d\n", timing, pi_trigger);
+    fprintf(f, "%ld,%d\n", timing, pi_trigger);
     fclose(f);
     return 1;
 }
@@ -360,7 +358,7 @@ int write_fitness(Fitness *values, int size, char* fname)
     }
     for(i=0; i<size; i++)
     {
-        fprintf(f, "%d\n", values[i]);
+        fprintf(f, "%ld\n", values[i]);
     }
     fclose(f);
     return 1;
@@ -477,23 +475,23 @@ void print_config(struct ea_parameters *params)
     printf("<Experiment parameters>\n");
     printf("\tInputfile:\t\t%s\n", params->inputfname);
     printf("\tOutputfile:\t\t%s\n", params->savefname ? params->savefname : "not saved");
-    printf("\tPopsize:\t\t%d\n", params->popsize);
-    printf("\tTournsize:\t\t%d\n", params->tournsize);
+    printf("\tPopsize:\t\t%ld\n", params->popsize);
+    printf("\tTournsize:\t\t%ld\n", params->tournsize);
     printf("\tMutationprob:\t\t%.4f\n", params->mutpb);
-    printf("\tMax evals:\t\t%d\n", params->max_evals);
-    printf("\tModel changes:\t\t%d\n", params->model_changes);
+    printf("\tMax evals:\t\t%ld\n", params->max_evals);
+    printf("\tModel changes:\t\t%ld\n", params->model_changes);
     printf("\tVerbose:\t\t%s\n", params->verbose ? "yes" : "no");
     printf("\tFilecheck:\t\t%s\n", params->filecheck ? "yes" : "no");
     printf("\tContinuous:\t\t%s\n", params->continuous ? "yes" : "no");
     printf("\tLocalsearch:\t\t%s\n", params->do_localsearch ? "yes" : "no");
     if(params->do_localsearch)
-        printf("\tLocalsearch k-value:\t%d\n", params->ls_k );
+        printf("\tLocalsearch k-value:\t%ld\n", params->ls_k );
     printf("\tPopulation Injection:\t%s\n", params->do_pi ? "yes" : "no");    
     if(params->do_pi)
     {
-        printf("\tInjection width:\t%d\n", params->pi_width);
+        printf("\tInjection width:\t%ld\n", params->pi_width);
         printf("\tInjection threshold:\t%.4f\n", params->pi_threshold);
-        printf("\tInjection size:\t\t%d\n", params->pi_size);
+        printf("\tInjection size:\t\t%ld\n", params->pi_size);
     }
     printf("</Experiment parameters>\n");
 }
@@ -510,7 +508,7 @@ void print_individual(Individual *ind)
         if(i) printf(" ");
         printf("%d", ind->values[i]);
     }
-    printf("], Fitness: %d (%x)\n", ind->fitness, ind);
+    printf("], Fitness: %ld (%p)\n", ind->fitness, ind);
 }
 
 /*
@@ -658,9 +656,9 @@ double population_fitness_stdev(Population *pop)
 void print_stats(Population *pop, int gen, long nevals, long nevals_ls, int print_ls, int print_pi)
 {
     printf("gen %4d", gen);
-    printf(" - nevals %4d", nevals);
+    printf(" - nevals %4ld", nevals);
     if(print_ls)
-        printf(" - ls nevals %4d", nevals_ls);
+        printf(" - ls nevals %4ld", nevals_ls);
     printf(" - mean %4.2f", population_fitness_mean(pop));
     printf(" - stdev %4.2f", population_fitness_stdev(pop));
     printf(" - min %4.2f", population_fitness_min(pop));
@@ -677,9 +675,9 @@ void print_model(NetworkModel *model)
 {
     int i;
     printf("<NetworkModel>\n");
-    printf("\t<ID>%d</ID>\n", model->id);
-    printf("\t<Vcount>%d</Vcount>\n", model->vcount);
-    printf("\t<Ecount>%d</Ecount>\n", model->ecount);
+    printf("\t<ID>%ld</ID>\n", model->id);
+    printf("\t<Vcount>%ld</Vcount>\n", model->vcount);
+    printf("\t<Ecount>%ld</Ecount>\n", model->ecount);
     printf("\t<Vertices>\n");
     for(i=0; i<model->vcount; i++)
         printf("\t\t<Vertex id=%d active=%d />\n", model->vertices[i].id, model->vertices[i].active);
@@ -700,7 +698,7 @@ int cleanup(Population *pop, NetworkModel *model, Fitness *fitvals, Diversity *d
     free_model(model);
     if(fitvals)
         free(fitvals);
-    if(div)
+    if(div->values)
         free(div->values);
     return 1;
 }
@@ -711,7 +709,6 @@ int cleanup(Population *pop, NetworkModel *model, Fitness *fitvals, Diversity *d
  */
 int check_model_files(char* basefile, int changes, int verbose, int continuous)
 {
-    //TODO: Just copied, refactor!
     int i;
     int check;
     // First read basefile
@@ -774,7 +771,7 @@ long localsearch(Individual *ind, int k, NetworkModel *model, Fitness *fitvals, 
 {
     if(ind->size < k)
     {
-        printf("WARNING: k-value too large for element, reducing to individuals genome size: %d\n", ind->size);
+        printf("WARNING: k-value too large for element, reducing to individuals genome size: %ld\n", ind->size);
         k = ind->size;
     }
     int neighbors[ind->size];
@@ -859,7 +856,7 @@ int run_continuous(struct ea_parameters* params)
         for(k=0; k<model.vcount; k++)
             if(model.vertices[k].active)
                 active++;
-        printf("Read file '%s' having |V| = %d (%d active), |E| = %d @ %d evals\n", replace_model(params->inputfname, 0), model.vcount, active, model.ecount, 0);
+        printf("Read file '%s' having |V| = %ld (%d active), |E| = %ld @ %d evals\n", replace_model(params->inputfname, 0), model.vcount, active, model.ecount, 0);
     }
     Fitness *fitvals = NULL;
     if(params->savefname)
@@ -885,6 +882,7 @@ int run_continuous(struct ea_parameters* params)
     }
     // Variables for PI
     Diversity diversity;
+    diversity.values = NULL;
     if(params->do_pi)
     {
         diversity._memsize = params->pi_width;
@@ -915,7 +913,7 @@ int run_continuous(struct ea_parameters* params)
                 {
                     printf("Final: ");
                     print_stats(&pop, i+1, nevals, ls_nevals, params->do_localsearch, injected);
-                    printf("Reached %d evaluations, quitting after %d seconds\n", nevals, time(NULL) - run_start_time);
+                    printf("Reached %d evaluations, quitting after %ld seconds\n", nevals, time(NULL) - run_start_time);
                 }
                 if(params->savefname) 
                 {
@@ -939,7 +937,7 @@ int run_continuous(struct ea_parameters* params)
                 {
                     printf("Final: ");
                     print_stats(&pop, i+1, nevals, ls_nevals, params->do_localsearch, injected);
-                    printf("Reached %d evaluations, quitting after %d seconds\n", nevals, time(NULL) - run_start_time);
+                    printf("Reached %d evaluations, quitting after %ld seconds\n", nevals, time(NULL) - run_start_time);
                 }
                 if(params->savefname) 
                 {
@@ -977,7 +975,7 @@ int run_continuous(struct ea_parameters* params)
                 {
                     printf("Final: ");
                     print_stats(&pop, i+1, nevals, ls_nevals, params->do_localsearch, injected);
-                    printf("Reached %d evaluations, quitting after %d seconds\n", nevals, time(NULL) - run_start_time);
+                    printf("Reached %d evaluations, quitting after %ld seconds\n", nevals, time(NULL) - run_start_time);
                 }
                 if(params->savefname) 
                 {
@@ -1110,7 +1108,7 @@ int run_default(struct ea_parameters* params)
         for(k=0; k<model.vcount; k++)
             if(model.vertices[k].active)
                 active++;
-        printf("Read file '%s' having |V| = %d (%d active), |E| = %d @ %d evals\n", current_model_fname, model.vcount, active, model.ecount, 0);
+        printf("Read file '%s' having |V| = %ld (%d active), |E| = %ld @ %d evals\n", current_model_fname, model.vcount, active, model.ecount, 0);
     }
 
     Fitness *fitvals = NULL;
@@ -1136,6 +1134,7 @@ int run_default(struct ea_parameters* params)
     }
     // Variables for PI
     Diversity diversity;
+    diversity.values = NULL;
     if(params->do_pi)
     {
         diversity._memsize = params->pi_width;
@@ -1166,7 +1165,7 @@ int run_default(struct ea_parameters* params)
                 {
                     printf("Final: ");
                     print_stats(&pop, i+1, nevals, ls_nevals, params->do_localsearch, injected);
-                    printf("Reached %d evaluations, quitting after %d seconds\n", nevals, time(NULL) - run_start_time);
+                    printf("Reached %d evaluations, quitting after %ld seconds\n", nevals, time(NULL) - run_start_time);
                 }
                 if(params->savefname) 
                 {
@@ -1202,7 +1201,7 @@ int run_default(struct ea_parameters* params)
                 int k;
                 for(k=0; k<model.vcount; k++)
                     active += model.vertices[k].active;
-                printf("Read file '%s' having |V| = %d (%d active), |E| = %d @ %d evals\n", current_model_fname, model.vcount, active, model.ecount, nevals);
+                printf("Read file '%s' having |V| = %ld (%d active), |E| = %ld @ %d evals\n", current_model_fname, model.vcount, active, model.ecount, nevals);
             }
             int k;
             for(k=0; k<pop.size; k++)
@@ -1225,7 +1224,7 @@ int run_default(struct ea_parameters* params)
                 {
                     printf("Final: ");
                     print_stats(&pop, i+1, nevals, ls_nevals, params->do_localsearch, injected);
-                    printf("Reached %d evaluations, quitting after %d seconds\n", nevals, time(NULL) - run_start_time);
+                    printf("Reached %d evaluations, quitting after %ld seconds\n", nevals, time(NULL) - run_start_time);
                 }
                 if(params->savefname) 
                 {
@@ -1278,7 +1277,7 @@ int run_default(struct ea_parameters* params)
                     int k;
                     for(k=0; k<model.vcount; k++)
                         active += model.vertices[k].active;
-                    printf("Read file '%s' having |V| = %d (%d active), |E| = %d @ %d evals\n", current_model_fname, model.vcount, active, model.ecount, nevals);
+                    printf("Read file '%s' having |V| = %ld (%d active), |E| = %ld @ %d evals\n", current_model_fname, model.vcount, active, model.ecount, nevals);
                 }
                 int k;
                 for(k=0; k<pop.size; k++)
@@ -1298,7 +1297,7 @@ int run_default(struct ea_parameters* params)
                 {
                     printf("Final: ");
                     print_stats(&pop, i+1, nevals, ls_nevals, params->do_localsearch, injected);
-                    printf("Reached %d evaluations, quitting after %d seconds\n", nevals, time(NULL) - run_start_time);
+                    printf("Reached %d evaluations, quitting after %ld seconds\n", nevals, time(NULL) - run_start_time);
                 }
                 if(params->savefname) 
                 {
@@ -1336,7 +1335,7 @@ int run_default(struct ea_parameters* params)
                     int k;
                     for(k=0; k<model.vcount; k++)
                         active += model.vertices[k].active;
-                    printf("Read file '%s' having |V| = %d (%d active), |E| = %d @%d evals\n", current_model_fname, model.vcount, active, model.ecount, nevals);
+                    printf("Read file '%s' having |V| = %ld (%d active), |E| = %ld @ %d evals\n", current_model_fname, model.vcount, active, model.ecount, nevals);
                 }
                 int k;
                 for(k=0; k<pop.size; k++)
@@ -1421,7 +1420,7 @@ int run_default(struct ea_parameters* params)
                             int k;
                             for(k=0; k<model.vcount; k++) 
                                 active += model.vertices[k].active;
-                            printf("Read file '%s' having |V| = %d (%d active), |E| = %d @ %d evals\n", current_model_fname, model.vcount, active, model.ecount, nevals);
+                            printf("Read file '%s' having |V| = %ld (%d active), |E| = %ld @ %d evals\n", current_model_fname, model.vcount, active, model.ecount, nevals);
                         }    
                         int k;
                         for(k=0; k<pop.size; k++) 
@@ -1471,4 +1470,5 @@ int main(int argc, char**argv)
        run_continuous(&params);
     else
        run_default(&params);
+    return 0;
 }

@@ -1,3 +1,3 @@
 #!/usr/bin/fish
 
-gcc monsel.c -O2 -lm -g -Wall -o monsel
+gcc monsel.c -O0 -lm -g -o monsel
