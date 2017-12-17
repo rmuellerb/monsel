@@ -11,8 +11,15 @@
 // TODO: Switch to base + diff files in default mode
 
 // typedefs and structs
-typedef unsigned char FitnessValues;
+typedef unsigned char Gene;
 typedef long Fitness;
+
+typedef struct Fitness_ext {
+    Fitness fitness;
+    long edges_weighted;
+    long edges_unweighted;
+    long n_mons;
+} Fitness_ext;
 
 typedef struct Vertex {
     int id;
@@ -35,7 +42,7 @@ typedef struct NetworkModel {
 } NetworkModel;
 
 typedef struct Individual {
-    FitnessValues *values;
+    Gene *values;
     long size;
     Fitness fitness;
 } Individual;
@@ -392,6 +399,28 @@ int penalty(Individual *ind, NetworkModel *model)
 }
 
 /*
+ * Calculates and returns the fitness value struct, containing the fitness value, the 
+ * number of uncovered edges and the number of monitors according to the given
+ * edge model and individual.
+ */
+Fitness_ext fitness_ext(Individual *ind, NetworkModel *model)
+{
+    Fitness_ext retval;
+    long i;
+    retval.n_mons = 0;
+    for(i=0; i<ind->size; i++)
+    {
+        if(!model->vertices[i].active)
+            continue;
+        retval.n_mons += ind->values[i];
+    }
+    retval.edges_weighted = penalty(ind, model);;
+    retval.fitness = retval.n_mons + retval.edges_weighted;
+    // TODO: Add uncovered edges (unweighted)
+    return retval;
+}
+
+/*
  * Calculates and returns the fitness values according to the given edge model and individual.
  * The fitness value already includes the penalty value.
  */
@@ -414,7 +443,7 @@ Fitness fitness(Individual *ind, NetworkModel *model)
  */
 void create_null_individual(Individual *ind, int size)
 {
-    ind->values = malloc(sizeof(FitnessValues) * size);
+    ind->values = malloc(sizeof(Gene) * size);
     long i;
     for(i=0; i<size; i++)
     {
@@ -429,7 +458,7 @@ void create_null_individual(Individual *ind, int size)
  */
 void create_random_individual(Individual *ind, int size)
 {
-    ind->values = malloc(sizeof(FitnessValues) * size);
+    ind->values = malloc(sizeof(Gene) * size);
     long i;
     for(i=0; i<size; i++)
     {
