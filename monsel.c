@@ -16,6 +16,8 @@ typedef long Fitness;
 
 typedef struct Fitness_ext {
     Fitness fitness;
+    long ecount;
+    long vcount;
     long edges_weighted;
     long edges_unweighted;
     long n_mons;
@@ -64,6 +66,7 @@ struct ea_parameters {
     char* inputfname;
     char* savefname;
     int filecheck;
+    int extended_write;
     int verbose;
     // ea
     int continuous;
@@ -105,6 +108,7 @@ static struct argp_option options[] =
     {"pi-size", 'o', "SIZE", 0, "injection size (default: 100)"},
     {0, 0, 0, 0, "Program parameters"},
     {"verbose", 'v', 0, 0, "Switch on verbose mode (default: no)"},
+    {"extended-write", 'e', 0, 0, "Switch on extended fitness mode (default: no). Ignored in case '--output'/'-w' is not given."},
     {"filecheck", 'f', 0, 0, "Switch on model checking before run (default: no)"},
     {"continuous", 'c', 0, 0, "Runs as continuous optimization, i.e., change model every evaluation. (default: no)"},
     {"output", 'w', "FILE", 0, "Fitness value output file (one value per line)"},
@@ -119,6 +123,7 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
         case 'v': params->verbose = 1; break;
         case 'c': params->continuous = 1; break;
         case 'f': params->filecheck = 1; break;
+        case 'e': params->extended_write = 1; break;
         case 'p': params->popsize = arg ? atol(arg) : 111; break;
         case 'w': params->savefname = arg; break;
         case 't': params->tournsize = arg ? atol(arg) : 5; break;
@@ -347,6 +352,26 @@ int write_meta_header(time_t timing, int pi_trigger, char* fname)
     return 1;
 }
 
+/*
+ * Writes given Fitness_ext values into given textfile, one per line.
+ * If file exists, appending to existing file.
+ * Returns 1 if successful, -1 if not
+ */
+int write_fitness_ext(Fitness_ext *values, int size, char* fname)
+{
+    FILE *f;
+    long i;
+    f = fopen(fname, "a");
+    if(f==NULL)
+    {
+        printf("Unable to open file '%s' for writing.\n", fname);
+        return -1;
+    }
+    for(i=0; i<size; i++)
+        fprintf(f, "%ld,%ld,%ld,%ld,%ld,%ld\n", values[i].fitness, values[i].ecount, values[i].edges_unweighted, values[i].edges_weighted, values[i].vcount, values[i].n_mons);
+    fclose(f);
+    return 1;
+}
 
 /*
  * Writes given fitness values into given textfile, one per line.
@@ -380,14 +405,53 @@ float frand(float to)
 }
 
 /*
+ * Counts and returns the number of active edges
+ */
+long active_edges(NetworkModel *model)
+{
+    long edges = 0;
+    for(long i=0; i<model->ecount; i++)  
+        if(model->edges[i].active)
+            edges += 1;
+    return edges;
+}
+
+/*
+ * Counts and returns the number of active nodes
+ */
+long active_nodes(NetworkModel *model)
+{
+    long nodes = 0;
+    for(long i=0; i<model->vcount; i++)   
+        if(model->vertices[i].active)
+            nodes += 1;
+    return nodes;
+}
+
+/*
+ * Calculates and returns the number of uncovered edges according to the given edge model and individual.
+ */
+int uncovered_edges(Individual *ind, NetworkModel *model)
+{
+    int u_edges = 0;
+    for(long i=0; i<model->ecount; i++)
+    {
+        if(!model->edges[i].active)
+            continue;
+        if(ind->values[model->edges[i].src] == 0 && ind->values[model->edges[i].dst] == 0)
+            u_edges += 1;
+    }
+    return u_edges;
+}
+
+/*
  * Calculates and returns the penalty according to the given edge model and individual.
  */
 int penalty(Individual *ind, NetworkModel *model)
 {
-    long i;
     int pen = 0;
     int factor = 2;
-    for(i=0; i<model->ecount; i++)
+    for(long i=0; i<model->ecount; i++)
     {
         if(ind->values[model->edges[i].src] == 0 && ind->values[model->edges[i].dst] == 0)
         {
@@ -406,17 +470,15 @@ int penalty(Individual *ind, NetworkModel *model)
 Fitness_ext fitness_ext(Individual *ind, NetworkModel *model)
 {
     Fitness_ext retval;
-    long i;
     retval.n_mons = 0;
-    for(i=0; i<ind->size; i++)
-    {
-        if(!model->vertices[i].active)
-            continue;
-        retval.n_mons += ind->values[i];
-    }
-    retval.edges_weighted = penalty(ind, model);;
+    for(long i=0; i<ind->size; i++)
+        if(model->vertices[i].active)
+            retval.n_mons += ind->values[i];
+    retval.edges_weighted = penalty(ind, model);
     retval.fitness = retval.n_mons + retval.edges_weighted;
-    // TODO: Add uncovered edges (unweighted)
+    retval.edges_unweighted = uncovered_edges(ind, model);
+    retval.vcount = active_nodes(model);
+    retval.ecount = active_edges(model);
     return retval;
 }
 
@@ -426,9 +488,8 @@ Fitness_ext fitness_ext(Individual *ind, NetworkModel *model)
  */
 Fitness fitness(Individual *ind, NetworkModel *model)
 {
-    long i;
     Fitness pen, fit = 0;
-    for(i=0; i<ind->size; i++)
+    for(long i=0; i<ind->size; i++)
     {
         if(!model->vertices[i].active)
             continue;
@@ -503,7 +564,8 @@ void print_config(struct ea_parameters *params)
 {
     printf("<Experiment parameters>\n");
     printf("\tInputfile:\t\t%s\n", params->inputfname);
-    printf("\tOutputfile:\t\t%s\n", params->savefname ? params->savefname : "not saved");
+    printf("\tOutputfile:\t\t%s\n", params->savefname ? params->savefname : "not saved");    
+    printf("\tExtended Write:\t\t%s\n", params->extended_write ? "yes" : "no");
     printf("\tPopsize:\t\t%ld\n", params->popsize);
     printf("\tTournsize:\t\t%ld\n", params->tournsize);
     printf("\tMutationprob:\t\t%.4f\n", params->mutpb);
@@ -721,10 +783,12 @@ void print_model(NetworkModel *model)
 /*
  * Clean up the memory used by the population and the model
  */
-int cleanup(Population *pop, NetworkModel *model, Fitness *fitvals, Diversity *div)
+int cleanup(Population *pop, NetworkModel *model, Fitness *fitvals, Diversity *div, Fitness_ext *fitvals_ext)
 {
     free_population(pop);
     free_model(model);
+    if(fitvals_ext)
+        free(fitvals_ext);
     if(fitvals)
         free(fitvals);
     if(div->values)
@@ -796,7 +860,7 @@ int pi_necessary(Diversity *div, double threshold)
  * number of evaluations of the LS method or use it for further processing.
  * Returns in case we have a model change or the maximum number of allowed evaluations is hit.
  */
-long localsearch(Individual *ind, int k, NetworkModel *model, Fitness *fitvals, long nevals, long max_evals, long change_evals, int continuous, char* inputfname)
+long localsearch(Individual *ind, int k, NetworkModel *model, Fitness *fitvals, long nevals, long max_evals, long change_evals, int continuous, char* inputfname, Fitness_ext *fitvals_ext)
 {
     if(ind->size < k)
     {
@@ -815,12 +879,14 @@ long localsearch(Individual *ind, int k, NetworkModel *model, Fitness *fitvals, 
         {
             ind->values[neighbors[i]] = !ind->values[neighbors[i]];
             Fitness fit = fitness(ind, model);
-            if(continuous)
-                read_diff_file(model, replace_model(inputfname, model->id + 1));
-            if(fitvals)
+            if(fitvals_ext)
+                fitvals_ext[nevals++] = fitness_ext(ind, model);
+            else if(fitvals)
                 fitvals[nevals++] = fit;
             else
                 nevals++;
+            if(continuous)
+                read_diff_file(model, replace_model(inputfname, model->id + 1));
             if(fit >= best_fitness)
                 ind->values[neighbors[i]] = !ind->values[neighbors[i]];
             else
@@ -829,7 +895,7 @@ long localsearch(Individual *ind, int k, NetworkModel *model, Fitness *fitvals, 
                 best_fitness = fit;
                 foundbetter = 1;
             }
-            // TODO: Following statement is improvable
+            // TODO: Following statement is improvable :-)
             if(continuous)
             {
                 if(nevals >= max_evals)
@@ -888,8 +954,14 @@ int run_continuous(struct ea_parameters* params)
         printf("Read file '%s' having |V| = %ld (%d active), |E| = %ld @ %d evals\n", replace_model(params->inputfname, 0), model.vcount, active, model.ecount, 0);
     }
     Fitness *fitvals = NULL;
+    Fitness_ext *fitvals_ext = NULL;
     if(params->savefname)
-        fitvals = malloc(sizeof(Fitness) * params->max_evals);
+    {
+        if(params->extended_write)
+            fitvals_ext = malloc(sizeof(Fitness_ext) * params->max_evals);
+        else
+            fitvals = malloc(sizeof(Fitness) * params->max_evals);
+    }
     int nevals = 0;
     Population pop;
     pop._memsize = params->popsize + params->popsize + params->pi_size;
@@ -904,9 +976,14 @@ int run_continuous(struct ea_parameters* params)
         ind.fitness = fitness(&ind, &model);
         read_diff_file(&model, replace_model(params->inputfname, model.id + 1));
         if(params->savefname)
-            fitvals[nevals++] = ind.fitness;
-        else
-            nevals++;
+            {
+                if(params->extended_write)
+                    fitvals_ext[nevals++] = fitness_ext(&ind, &model);
+                else
+                    fitvals[nevals++] = ind.fitness;
+            }
+            else
+                nevals++;
         pop.ind[pop.size++] = ind;
     }
     // Variables for PI
@@ -947,14 +1024,17 @@ int run_continuous(struct ea_parameters* params)
                 if(params->savefname) 
                 {
                     write_meta_header(time(NULL) - run_start_time, pi_triggered, params->savefname);
-                    write_fitness(fitvals, nevals, params->savefname);
+                    if(params->extended_write)
+                        write_fitness_ext(fitvals_ext, nevals, params->savefname);
+                    else
+                        write_fitness(fitvals, nevals, params->savefname);
                 }
-                cleanup(&pop, &model, fitvals, &diversity);
+                cleanup(&pop, &model, fitvals, &diversity, fitvals_ext);
                 return 0;
             }
             long idx = best_individual_idx(&pop);
             ls_nevals = nevals;
-            nevals = localsearch(&pop.ind[idx], params->ls_k, &model, fitvals, nevals, params->max_evals, 1, params->continuous, params->inputfname);
+            nevals = localsearch(&pop.ind[idx], params->ls_k, &model, fitvals, nevals, params->max_evals, 1, params->continuous, params->inputfname, fitvals_ext);
             ls_nevals = nevals - ls_nevals;
         }
         // choose parents and perform crossover + mutation on children
@@ -971,9 +1051,12 @@ int run_continuous(struct ea_parameters* params)
                 if(params->savefname) 
                 {
                     write_meta_header(time(NULL) - run_start_time, pi_triggered, params->savefname);
-                    write_fitness(fitvals, nevals, params->savefname);
+                    if(params->extended_write)
+                        write_fitness_ext(fitvals_ext, nevals, params->savefname);
+                    else
+                        write_fitness(fitvals, nevals, params->savefname);
                 }
-                cleanup(&pop, &model, fitvals, &diversity);
+                cleanup(&pop, &model, fitvals, &diversity, fitvals_ext);
                 return 0;
             }
             int p1;
@@ -994,7 +1077,12 @@ int run_continuous(struct ea_parameters* params)
             c1.fitness = fitness(&c1, &model);
             read_diff_file(&model, replace_model(params->inputfname, model.id + 1));
             if(params->savefname)
-                fitvals[nevals++] = c1.fitness;
+            {
+                if(params->extended_write)
+                    fitvals_ext[nevals++] = fitness_ext(&c1, &model);
+                else
+                    fitvals[nevals++] = c1.fitness;
+            }
             else
                 nevals++;
             pop.ind[pop.size++] = c1;
@@ -1006,18 +1094,26 @@ int run_continuous(struct ea_parameters* params)
                     print_stats(&pop, i+1, nevals, ls_nevals, params->do_localsearch, injected);
                     printf("Reached %d evaluations, quitting after %ld seconds\n", nevals, time(NULL) - run_start_time);
                 }
-                if(params->savefname) 
+               if(params->savefname) 
                 {
                     write_meta_header(time(NULL) - run_start_time, pi_triggered, params->savefname);
-                    write_fitness(fitvals, nevals, params->savefname);
+                    if(params->extended_write)
+                        write_fitness_ext(fitvals_ext, nevals, params->savefname);
+                    else
+                        write_fitness(fitvals, nevals, params->savefname);
                 }
-                cleanup(&pop, &model, fitvals, &diversity);
+                cleanup(&pop, &model, fitvals, &diversity, fitvals_ext);
                 return 0;
             }
             c2.fitness = fitness(&c2, &model);
             read_diff_file(&model, replace_model(params->inputfname, model.id + 1));
             if(params->savefname)
-                fitvals[nevals++] = c2.fitness;
+            {
+                if(params->extended_write)
+                    fitvals_ext[nevals++] = fitness_ext(&c2, &model);
+                else
+                    fitvals[nevals++] = c2.fitness;
+            }
             else
                 nevals++;
             pop.ind[pop.size++] = c2;
@@ -1064,7 +1160,12 @@ int run_continuous(struct ea_parameters* params)
                     ind.fitness = fitness(&ind, &model);
                     read_diff_file(&model, replace_model(params->inputfname, model.id + 1));
                     if(params->savefname)
-                        fitvals[nevals++] = ind.fitness;
+                    {
+                        if(params->extended_write)
+                            fitvals_ext[nevals++] = fitness_ext(&ind, &model);
+                        else
+                            fitvals[nevals++] = ind.fitness;
+                    }
                     else
                         nevals++;
                     pop.ind[pop.size++] = ind;
@@ -1139,10 +1240,15 @@ int run_default(struct ea_parameters* params)
                 active++;
         printf("Read file '%s' having |V| = %ld (%d active), |E| = %ld @ %d evals\n", current_model_fname, model.vcount, active, model.ecount, 0);
     }
-
     Fitness *fitvals = NULL;
+    Fitness_ext *fitvals_ext = NULL;
     if(params->savefname)
-        fitvals = malloc(sizeof(Fitness) * params->max_evals);
+    {
+        if(params->extended_write)
+            fitvals_ext = malloc(sizeof(Fitness_ext) * params->max_evals);
+        else
+            fitvals = malloc(sizeof(Fitness) * params->max_evals);
+    }
     int nevals = 0;
     Population pop;
     pop._memsize = params->popsize + params->popsize + params->pi_size;
@@ -1156,9 +1262,12 @@ int run_default(struct ea_parameters* params)
         create_random_individual(&ind, model.vcount);
         ind.fitness = fitness(&ind, &model);
         if(params->savefname)
-            fitvals[nevals++] = ind.fitness;
-        else
-            nevals++;
+        {
+            if(params->extended_write)
+                fitvals_ext[nevals++] = fitness_ext(&ind, &model);
+            else
+                fitvals[nevals++] = ind.fitness;
+        }
         pop.ind[pop.size++] = ind;
     }
     // Variables for PI
@@ -1199,14 +1308,17 @@ int run_default(struct ea_parameters* params)
                 if(params->savefname) 
                 {
                     write_meta_header(time(NULL) - run_start_time, pi_triggered, params->savefname);
-                    write_fitness(fitvals, nevals, params->savefname);
+                    if(params->extended_write)
+                        write_fitness_ext(fitvals_ext, nevals, params->savefname);
+                    else
+                        write_fitness(fitvals, nevals, params->savefname);
                 }
-                cleanup(&pop, &model, fitvals, &diversity);
+                cleanup(&pop, &model, fitvals, &diversity, fitvals_ext);
                 return 0;
             }
             long idx = best_individual_idx(&pop);
             ls_nevals = nevals;
-            nevals = localsearch(&pop.ind[idx], params->ls_k, &model, fitvals, nevals, params->max_evals, change_eval, params->continuous, params->inputfname);
+            nevals = localsearch(&pop.ind[idx], params->ls_k, &model, fitvals, nevals, params->max_evals, change_eval, params->continuous, params->inputfname, fitvals_ext);
             ls_nevals = nevals - ls_nevals;
         }
         if((nevals % change_eval) == 0)
@@ -1239,9 +1351,12 @@ int run_default(struct ea_parameters* params)
                     break;
                 pop.ind[k].fitness = fitness(&pop.ind[k], &model);
                 if(params->savefname)
-                    fitvals[nevals++] = pop.ind[k].fitness;
-                else
-                    nevals++;
+                {
+                    if(params->extended_write)
+                        fitvals_ext[nevals++] = fitness_ext(&pop.ind[k], &model);
+                    else
+                        fitvals[nevals++] = pop.ind[k].fitness;
+                }
             }
         }
         // choose parents and perform crossover + mutation on children
@@ -1258,9 +1373,12 @@ int run_default(struct ea_parameters* params)
                 if(params->savefname) 
                 {
                     write_meta_header(time(NULL) - run_start_time, pi_triggered, params->savefname);
-                    write_fitness(fitvals, nevals, params->savefname);
+                    if(params->extended_write)
+                        write_fitness_ext(fitvals_ext, nevals, params->savefname);
+                    else
+                        write_fitness(fitvals, nevals, params->savefname);
                 }
-                cleanup(&pop, &model, fitvals, &diversity);
+                cleanup(&pop, &model, fitvals, &diversity, fitvals_ext);
                 return 0;
             }
             int p1;
@@ -1280,9 +1398,12 @@ int run_default(struct ea_parameters* params)
             bitflip_mutation(&c2, params->mutpb);
             c1.fitness = fitness(&c1, &model);
             if(params->savefname)
-                fitvals[nevals++] = c1.fitness;
-            else
-                nevals++;
+            {
+                if(params->extended_write)
+                    fitvals_ext[nevals++] = fitness_ext(&c1, &model);
+                else
+                    fitvals[nevals++] = c1.fitness;
+            }
             pop.ind[pop.size++] = c1;
             // TODO: Model change!
             if((nevals % change_eval) == 0)
@@ -1315,9 +1436,12 @@ int run_default(struct ea_parameters* params)
                         break;
                     pop.ind[k].fitness = fitness(&pop.ind[k], &model);
                     if(params->savefname)
-                        fitvals[nevals++] = pop.ind[k].fitness;
-                    else
-                        nevals++;
+                    {
+                        if(params->extended_write)
+                            fitvals_ext[nevals++] = fitness_ext(&pop.ind[k], &model);
+                        else
+                            fitvals[nevals++] = pop.ind[k].fitness;
+                    }
                 }
             }
             if(nevals >= params->max_evals)
@@ -1331,16 +1455,22 @@ int run_default(struct ea_parameters* params)
                 if(params->savefname) 
                 {
                     write_meta_header(time(NULL) - run_start_time, pi_triggered, params->savefname);
-                    write_fitness(fitvals, nevals, params->savefname);
+                    if(params->extended_write)
+                        write_fitness_ext(fitvals_ext, nevals, params->savefname);
+                    else
+                        write_fitness(fitvals, nevals, params->savefname);
                 }
-                cleanup(&pop, &model, fitvals, &diversity);
+                cleanup(&pop, &model, fitvals, &diversity, fitvals_ext);
                 return 0;
             }
             c2.fitness = fitness(&c2, &model);
             if(params->savefname)
-                fitvals[nevals++] = c2.fitness;
-            else
-                nevals++;
+            {
+                if(params->extended_write)
+                    fitvals_ext[nevals++] = fitness_ext(&c2, &model);
+                else
+                    fitvals[nevals++] = c2.fitness;
+            }
             pop.ind[pop.size++] = c2;
             // TODO: Model change!
             if((nevals % change_eval) == 0)
@@ -1373,9 +1503,12 @@ int run_default(struct ea_parameters* params)
                         break;
                     pop.ind[k].fitness = fitness(&pop.ind[k], &model);
                     if(params->savefname)
-                        fitvals[nevals++] = pop.ind[k].fitness;
-                    else
-                        nevals++;
+                    {
+                        if(params->extended_write)
+                            fitvals_ext[nevals++] = fitness_ext(&pop.ind[k], &model);
+                        else
+                            fitvals[nevals++] = pop.ind[k].fitness;
+                    }
                 }
             }
         }
@@ -1420,9 +1553,12 @@ int run_default(struct ea_parameters* params)
                     create_random_individual(&ind, model.vcount);
                     ind.fitness = fitness(&ind, &model);
                     if(params->savefname)
-                        fitvals[nevals++] = ind.fitness;
-                    else
-                        nevals++;
+                    {
+                        if(params->extended_write)
+                            fitvals_ext[nevals++] = fitness_ext(&ind, &model);
+                        else
+                            fitvals[nevals++] = ind.fitness;
+                    }
                     pop.ind[pop.size++] = ind;
                     injected++;
                     if(nevals >= params->max_evals)
@@ -1451,6 +1587,7 @@ int run_default(struct ea_parameters* params)
                                 active += model.vertices[k].active;
                             printf("Read file '%s' having |V| = %ld (%d active), |E| = %ld @ %d evals\n", current_model_fname, model.vcount, active, model.ecount, nevals);
                         }    
+                        // TODO: Double declaration of k???
                         int k;
                         for(k=0; k<pop.size; k++) 
                         {    
@@ -1458,7 +1595,12 @@ int run_default(struct ea_parameters* params)
                                 break;
                             pop.ind[k].fitness = fitness(&pop.ind[k], &model);
                             if(params->savefname)
-                                fitvals[nevals++] = pop.ind[k].fitness;
+                            {
+                                if(params->extended_write)
+                                    fitvals_ext[nevals++] = fitness_ext(&pop.ind[k], &model);
+                                else
+                                    fitvals[nevals++] = pop.ind[k].fitness;
+                            }
                             else
                                 nevals++;
                         }
@@ -1479,6 +1621,7 @@ int main(int argc, char**argv)
     struct ea_parameters params;
     params.inputfname = NULL;
     params.savefname = NULL;
+    params.extended_write = 0;
     params.popsize = 100;
     params.tournsize = 5;
     params.mutpb = 0.05;
