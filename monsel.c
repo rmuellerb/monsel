@@ -160,7 +160,7 @@ static struct argp argp = {options, parse_opt, args_doc, doc};
  */
 char *replace_model(char *base, long netnumber)
 {
-    char newnumber[10];
+    char newnumber[12];
     sprintf(newnumber, "%ld", netnumber);
     //TODO: Buffer Overflow or errors if filenames are much longer
     static char buffer[1000];
@@ -1029,6 +1029,7 @@ int run_continuous(struct ea_parameters* params)
     // Variables for PI
     Diversity diversity;
     diversity.values = NULL;
+    diversity._memsize = 0;
     if(params->do_pi)
     {
         diversity._memsize = params->pi_width;
@@ -1321,6 +1322,7 @@ int run_default(struct ea_parameters* params)
     // Variables for PI
     Diversity diversity;
     diversity.values = NULL;
+    diversity._memsize = 0;
     if(params->do_pi)
     {
         diversity._memsize = params->pi_width;
