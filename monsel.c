@@ -65,6 +65,7 @@ struct ea_parameters {
     // program
     char* inputfname;
     char* savefname;
+    char* genfname;
     int filecheck;
     int extended_write;
     int verbose;
@@ -84,6 +85,10 @@ struct ea_parameters {
     double pi_threshold;
     long pi_size;
 };
+
+// HEADER
+
+Fitness fitness(Individual *ind, NetworkModel *model);
 
 const char *argp_program_version = "0.5";
 const char *argp_program_bug_address = "<mueller-bady@linux.com>";
@@ -112,6 +117,7 @@ static struct argp_option options[] =
     {"filecheck", 'f', 0, 0, "Switch on model checking before run (default: no)"},
     {"continuous", 'c', 0, 0, "Runs as continuous optimization, i.e., change model every evaluation. (default: no)"},
     {"output", 'w', "FILE", 0, "Fitness value output file (one value per line)"},
+    {"gen-output", 'q', "FILE", 0, "Fitness value output file for the whole generation (one generation per line as *.csv using the given FILE)"},
     {0}
 };
 
@@ -126,6 +132,7 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
         case 'e': params->extended_write = 1; break;
         case 'p': params->popsize = arg ? atol(arg) : 111; break;
         case 'w': params->savefname = arg; break;
+        case 'q': params->genfname = arg; break;
         case 't': params->tournsize = arg ? atol(arg) : 5; break;
         case 'm': params->mutpb = arg ? atof(arg) : 0.05; break;
         case 'n': params->max_evals = arg ? atol(arg) : 100000; break;
@@ -374,6 +381,33 @@ int write_fitness_ext(Fitness_ext *values, int size, char* fname)
 }
 
 /*
+ * Writes all fitness values of the given population to a file (in one line) as *.csv.
+ * Evaluation is done on demand while writing and does not count to the evaluation count.
+ * If file exists, appending to existing file.
+ * Returns 1 if successful, -1 if not
+ */
+int write_generation_fitness(Population* pop, NetworkModel* model, char* fname)
+{
+    FILE *f;
+    long i;
+    f = fopen(fname, "a");
+    if(f==NULL)
+    {
+        printf("Unable to open file '%s' for writing.\n", fname);
+        return -1;
+    }
+    for(i=0; i<pop->size; i++)
+    {
+        if(i == (pop->size - 1))
+            fprintf(f, "%ld\n", fitness(&pop->ind[i], model));
+        else
+            fprintf(f, "%ld,", fitness(&pop->ind[i], model));
+    }
+    fclose(f);
+    return 1;
+}
+
+/*
  * Writes given fitness values into given textfile, one per line.
  * If file exists, appending to existing file.
  * Returns 1 if successful, -1 if not
@@ -564,7 +598,8 @@ void print_config(struct ea_parameters *params)
 {
     printf("<Experiment parameters>\n");
     printf("\tInputfile:\t\t%s\n", params->inputfname);
-    printf("\tOutputfile:\t\t%s\n", params->savefname ? params->savefname : "not saved");    
+    printf("\tOutputfile fitness:\t%s\n", params->savefname ? params->savefname : "not saved");
+    printf("\tOutputfile generation:\t%s\n", params->genfname ? params->genfname : "not saved");    
     printf("\tExtended Write:\t\t%s\n", params->extended_write ? "yes" : "no");
     printf("\tPopsize:\t\t%ld\n", params->popsize);
     printf("\tTournsize:\t\t%ld\n", params->tournsize);
@@ -973,18 +1008,23 @@ int run_continuous(struct ea_parameters* params)
     {
         Individual ind;
         create_random_individual(&ind, model.vcount);
-        ind.fitness = fitness(&ind, &model);
+        pop.ind[pop.size++] = ind;
+    }
+    for(i=0; i<pop.size; i++)
+    {
+        pop.ind[i].fitness = fitness(&pop.ind[i], &model);
+        if(params->genfname)
+            write_generation_fitness(&pop, &model, params->genfname);
         read_diff_file(&model, replace_model(params->inputfname, model.id + 1));
         if(params->savefname)
-            {
-                if(params->extended_write)
-                    fitvals_ext[nevals++] = fitness_ext(&ind, &model);
-                else
-                    fitvals[nevals++] = ind.fitness;
-            }
+        {
+            if(params->extended_write)
+                fitvals_ext[nevals++] = fitness_ext(&pop.ind[i], &model);
             else
-                nevals++;
-        pop.ind[pop.size++] = ind;
+                fitvals[nevals++] = pop.ind[i].fitness;
+        }
+        else
+            nevals++;
     }
     // Variables for PI
     Diversity diversity;
@@ -1075,6 +1115,8 @@ int run_continuous(struct ea_parameters* params)
             bitflip_mutation(&c1, params->mutpb);
             bitflip_mutation(&c2, params->mutpb);
             c1.fitness = fitness(&c1, &model);
+            if(params->genfname)
+                write_generation_fitness(&pop, &model, params->genfname);
             read_diff_file(&model, replace_model(params->inputfname, model.id + 1));
             if(params->savefname)
             {
@@ -1106,6 +1148,8 @@ int run_continuous(struct ea_parameters* params)
                 return 0;
             }
             c2.fitness = fitness(&c2, &model);
+            if(params->genfname)
+                write_generation_fitness(&pop, &model, params->genfname);
             read_diff_file(&model, replace_model(params->inputfname, model.id + 1));
             if(params->savefname)
             {
@@ -1158,6 +1202,8 @@ int run_continuous(struct ea_parameters* params)
                     Individual ind;
                     create_random_individual(&ind, model.vcount);
                     ind.fitness = fitness(&ind, &model);
+                    if(params->genfname)
+                        write_generation_fitness(&pop, &model, params->genfname);
                     read_diff_file(&model, replace_model(params->inputfname, model.id + 1));
                     if(params->savefname)
                     {
