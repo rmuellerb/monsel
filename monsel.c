@@ -1233,6 +1233,8 @@ int run_continuous(struct ea_parameters* params)
  */
 int run_default(struct ea_parameters* params)
 {
+    if(params->genfname)
+        printf("##### WARNING: Generation output feature not implemented yet in default EA mode! Use continuous mode to use it!\n");
     long i = 0;
     long change_eval;
     char *current_model_fname;
@@ -1667,6 +1669,7 @@ int main(int argc, char**argv)
     struct ea_parameters params;
     params.inputfname = NULL;
     params.savefname = NULL;
+    params.genfname = NULL;
     params.extended_write = 0;
     params.popsize = 100;
     params.tournsize = 5;
