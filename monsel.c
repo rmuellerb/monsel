@@ -23,6 +23,15 @@ typedef struct Fitness_ext {
     long n_mons;
 } Fitness_ext;
 
+typedef struct Generation_data {
+    double mean_edges_weighted;
+    double mean_edges_unweighted;
+    double mean_n_mons;
+    double std_edges_weighted;
+    double std_edges_unweighted;
+    double std_n_mons;
+} Generation_data;
+
 typedef struct Vertex {
     int id;
     int active;
@@ -117,7 +126,7 @@ static struct argp_option options[] =
     {"filecheck", 'f', 0, 0, "Switch on model checking before run (default: no)"},
     {"continuous", 'c', 0, 0, "Runs as continuous optimization, i.e., change model every evaluation. (default: no)"},
     {"output", 'w', "FILE", 0, "Fitness value output file (one value per line)"},
-    {"gen-output", 'q', "FILE", 0, "Fitness value output file for the whole generation (one generation per line as *.csv using the given FILE)"},
+    {"gen-output", 'q', "FILE", 0, "Extended fitness value output file for the whole generation (one generation per line using the given FILE)"},
     {0}
 };
 
@@ -153,6 +162,29 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
 static struct argp argp = {options, parse_opt, args_doc, doc};
 
 // functions
+
+/*
+ * Calculates the standard deviation of an arbitrary long array
+ * For performance reasons, the mean should be precalculated and given.
+ */
+double long_stdev(long *arr, int size, double mean)
+{
+    double sum = 0;
+    for(int i=0; i<size; i++)
+        sum += pow(arr[i] - mean, 2);
+    return sqrt(sum / (double)size);
+}
+
+/*
+ * Calculates mean of an arbitrary long array
+ */
+double long_mean(long *arr, int size)
+{
+    long sum = 0;
+    for(int i=0; i<size; i++)
+        sum += arr[i];
+    return (sum / (double)size);
+}
 
 /*
  * Replace the characters "base" according to a given model sequence number 'netnumber'.
@@ -381,6 +413,30 @@ int write_fitness_ext(Fitness_ext *values, int size, char* fname)
 }
 
 /*
+ * Writes all Generation_data values file as *.csv.
+ * If file exists, appending to existing file.
+ * Returns 1 if successful, -1 if not
+ */
+int write_generation_data(Generation_data* data, int size, char* fname)
+{
+    FILE *f;
+    f = fopen(fname, "a");
+    if(f==NULL)
+    {
+        printf("Unable to open file '%s' for writing.\n", fname);
+        return -1;
+    }
+    fprintf(f, "mean weighted edges,mean unweighted edges,mean nmons,std weighted edges,std unweighted edges,std nmons\n");
+    for(int i=0; i<size; i++)
+    {
+        fprintf(f, "%f,%f,%f,%f,%f,%f\n", data[i].mean_edges_weighted, data[i].mean_edges_unweighted, data[i].mean_n_mons, data[i].std_edges_weighted, data[i].std_edges_unweighted, data[i].std_n_mons);
+    }
+    fclose(f);
+    return 1;
+}
+
+
+/*
  * Writes all fitness values of the given population to a file (in one line) as *.csv.
  * Evaluation is done on demand while writing and does not count to the evaluation count.
  * If file exists, appending to existing file.
@@ -554,13 +610,38 @@ void create_null_individual(Individual *ind, int size)
 void create_random_individual(Individual *ind, int size)
 {
     ind->values = malloc(sizeof(Gene) * size);
-    long i;
-    for(i=0; i<size; i++)
+    for(int i=0; i<size; i++)
     {
         ind->values[i] = rand() % 2;
     }
     ind->size = size;
     ind->fitness = -1;
+}
+
+/*
+ * Creates a Generation_data struct filled with the information about the given generation and network model
+ */
+Generation_data create_generation_data(Population* pop, NetworkModel* model)
+{
+    long edges_weighted[pop->size];
+    long edges_unweighted[pop->size];
+    long n_mons[pop->size];
+    for(int i=0; i<pop->size; i++)
+    {
+        Fitness_ext tmp = fitness_ext(&pop->ind[i], model);
+        edges_weighted[i] = tmp.edges_weighted;
+        edges_unweighted[i] = tmp.edges_unweighted;
+        n_mons[i] = tmp.n_mons;
+
+    }
+    Generation_data data;
+    data.mean_edges_weighted = long_mean(edges_weighted, pop->size);
+    data.mean_edges_unweighted = long_mean(edges_unweighted, pop->size);
+    data.mean_n_mons = long_mean(n_mons, pop->size);
+    data.std_edges_weighted = long_stdev(edges_weighted, pop->size, data.mean_edges_weighted);
+    data.std_edges_unweighted = long_stdev(edges_unweighted, pop->size, data.mean_edges_unweighted);
+    data.std_n_mons = long_stdev(n_mons, pop->size, data.mean_n_mons);
+    return data;
 }
 
 /*
@@ -738,20 +819,22 @@ double population_fitness_max(Population *pop)
     return max;
 }
 
+
 /*
- * Calculates mean of an arbitrary Fitness array
+ * Calculates mean of an arbitrary double array
  */
 double fitness_mean(double *arr, int size)
 {
     double sum = 0;
-    long i;
-    for(i=0; i<size; i++)
+    for(int i=0; i<size; i++)
         sum += arr[i];
     return (sum / (double)size);
 }
 
+
+
 /*
- * Calculates the standard deviation of an arbitrary Fitness array
+ * Calculates the standard deviation of an arbitrary double array
  */
 double fitness_stdev(double *arr, int size)
 {
@@ -988,14 +1071,20 @@ int run_continuous(struct ea_parameters* params)
                 active++;
         printf("Read file '%s' having |V| = %ld (%d active), |E| = %ld @ %d evals\n", replace_model(params->inputfname, 0), model.vcount, active, model.ecount, 0);
     }
-    Fitness *fitvals = NULL;
-    Fitness_ext *fitvals_ext = NULL;
+    Fitness* fitvals = NULL;
+    Fitness_ext* fitvals_ext = NULL;
+    Generation_data* gendata = NULL;
+    int gendatacount = 0;
     if(params->savefname)
     {
         if(params->extended_write)
             fitvals_ext = malloc(sizeof(Fitness_ext) * params->max_evals);
         else
             fitvals = malloc(sizeof(Fitness) * params->max_evals);
+    }
+    if(params->genfname)
+    {
+        gendata = malloc(sizeof(Generation_data) * params->max_evals);
     }
     int nevals = 0;
     Population pop;
@@ -1014,7 +1103,7 @@ int run_continuous(struct ea_parameters* params)
     {
         pop.ind[i].fitness = fitness(&pop.ind[i], &model);
         if(params->genfname)
-            write_generation_fitness(&pop, &model, params->genfname);
+            gendata[gendatacount++] = create_generation_data(&pop, &model);
         read_diff_file(&model, replace_model(params->inputfname, model.id + 1));
         if(params->savefname)
         {
@@ -1070,6 +1159,11 @@ int run_continuous(struct ea_parameters* params)
                     else
                         write_fitness(fitvals, nevals, params->savefname);
                 }
+                if(params->genfname)
+                {
+                    write_generation_data(gendata, gendatacount, params->genfname);
+                    free(gendata);
+                }
                 cleanup(&pop, &model, fitvals, &diversity, fitvals_ext);
                 return 0;
             }
@@ -1097,6 +1191,11 @@ int run_continuous(struct ea_parameters* params)
                     else
                         write_fitness(fitvals, nevals, params->savefname);
                 }
+                if(params->genfname)
+                {
+                    write_generation_data(gendata, gendatacount, params->genfname);
+                    free(gendata);
+                }
                 cleanup(&pop, &model, fitvals, &diversity, fitvals_ext);
                 return 0;
             }
@@ -1117,7 +1216,7 @@ int run_continuous(struct ea_parameters* params)
             bitflip_mutation(&c2, params->mutpb);
             c1.fitness = fitness(&c1, &model);
             if(params->genfname)
-                write_generation_fitness(&pop, &model, params->genfname);
+                gendata[gendatacount++] = create_generation_data(&pop, &model);
             read_diff_file(&model, replace_model(params->inputfname, model.id + 1));
             if(params->savefname)
             {
@@ -1137,7 +1236,7 @@ int run_continuous(struct ea_parameters* params)
                     print_stats(&pop, i+1, nevals, ls_nevals, params->do_localsearch, injected);
                     printf("Reached %d evaluations, quitting after %ld seconds\n", nevals, time(NULL) - run_start_time);
                 }
-               if(params->savefname) 
+                if(params->savefname) 
                 {
                     write_meta_header(time(NULL) - run_start_time, pi_triggered, params->savefname);
                     if(params->extended_write)
@@ -1145,12 +1244,17 @@ int run_continuous(struct ea_parameters* params)
                     else
                         write_fitness(fitvals, nevals, params->savefname);
                 }
+                if(params->genfname)
+                {
+                    write_generation_data(gendata, gendatacount, params->genfname);
+                    free(gendata);
+                }
                 cleanup(&pop, &model, fitvals, &diversity, fitvals_ext);
                 return 0;
             }
             c2.fitness = fitness(&c2, &model);
             if(params->genfname)
-                write_generation_fitness(&pop, &model, params->genfname);
+                gendata[gendatacount++] = create_generation_data(&pop, &model);
             read_diff_file(&model, replace_model(params->inputfname, model.id + 1));
             if(params->savefname)
             {
@@ -1204,7 +1308,7 @@ int run_continuous(struct ea_parameters* params)
                     create_random_individual(&ind, model.vcount);
                     ind.fitness = fitness(&ind, &model);
                     if(params->genfname)
-                        write_generation_fitness(&pop, &model, params->genfname);
+                        gendata[gendatacount++] = create_generation_data(&pop, &model);
                     read_diff_file(&model, replace_model(params->inputfname, model.id + 1));
                     if(params->savefname)
                     {
@@ -1690,8 +1794,8 @@ int main(int argc, char**argv)
 
     argp_parse(&argp, argc, argv, 0, 0, &params);
     if(params.continuous)
-       run_continuous(&params);
+        run_continuous(&params);
     else
-       run_default(&params);
+        run_default(&params);
     return 0;
 }
