@@ -187,6 +187,29 @@ double long_mean(long *arr, int size)
 }
 
 /*
+ * Calculates the standard deviation of an arbitrary double array
+ * For performance reasons, the mean should be precalculated and given.
+ */
+double double_stdev(double *arr, int size, double mean)
+{
+    double sum = 0;
+    for(int i=0; i<size; i++)
+        sum += pow(arr[i] - mean, 2);
+    return sqrt(sum / (double)size);
+}
+
+/*
+ * Calculates mean of an arbitrary double array
+ */
+double double_mean(double *arr, int size)
+{
+    double sum = 0;
+    for(int i=0; i<size; i++)
+        sum += arr[i];
+    return (sum / (double)size);
+}
+
+/*
  * Replace the characters "base" according to a given model sequence number 'netnumber'.
  * Returns a pointer to the new string or NULL in case no base file is given.
  */
@@ -623,24 +646,24 @@ void create_random_individual(Individual *ind, int size)
  */
 Generation_data create_generation_data(Population* pop, NetworkModel* model)
 {
-    long edges_weighted[pop->size];
-    long edges_unweighted[pop->size];
-    long n_mons[pop->size];
+    double edges_weighted[pop->size];
+    double edges_unweighted[pop->size];
+    double n_mons[pop->size];
     for(int i=0; i<pop->size; i++)
     {
         Fitness_ext tmp = fitness_ext(&pop->ind[i], model);
         edges_weighted[i] = tmp.edges_weighted;
-        edges_unweighted[i] = tmp.edges_unweighted;
-        n_mons[i] = tmp.n_mons;
+        edges_unweighted[i] = 1 - (tmp.edges_unweighted / (double)model->ecount);
+        n_mons[i] = tmp.n_mons / (double)model->ecount;
 
     }
     Generation_data data;
-    data.mean_edges_weighted = long_mean(edges_weighted, pop->size);
-    data.mean_edges_unweighted = long_mean(edges_unweighted, pop->size);
-    data.mean_n_mons = long_mean(n_mons, pop->size);
-    data.std_edges_weighted = long_stdev(edges_weighted, pop->size, data.mean_edges_weighted);
-    data.std_edges_unweighted = long_stdev(edges_unweighted, pop->size, data.mean_edges_unweighted);
-    data.std_n_mons = long_stdev(n_mons, pop->size, data.mean_n_mons);
+    data.mean_edges_weighted = double_mean(edges_weighted, pop->size);
+    data.mean_edges_unweighted = double_mean(edges_unweighted, pop->size);
+    data.mean_n_mons = double_mean(n_mons, pop->size);
+    data.std_edges_weighted = double_stdev(edges_weighted, pop->size, data.mean_edges_weighted);
+    data.std_edges_unweighted = double_stdev(edges_unweighted, pop->size, data.mean_edges_unweighted);
+    data.std_n_mons = double_stdev(n_mons, pop->size, data.mean_n_mons);
     return data;
 }
 
