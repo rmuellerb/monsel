@@ -237,10 +237,9 @@ char *replace_model(char *base, long netnumber)
  */
 void distinct_random_values(int *values, long size)
 {
-    long i;
-    for(i=0; i<size; i++)
+    for(int i=0; i<size; i++)
         values[i] = i;
-    for(i=size-1; i>=0; i--)
+    for(int i=size-1; i>=0; i--)
     {
         int swapto = rand() % size;
         int tmp = values[swapto];
@@ -256,8 +255,7 @@ void distinct_random_values(int *values, long size)
 int contains(int *array, int size, int value)
 {
     if(!size) return 0;
-    long i;
-    for(i=0; i<size; i++)
+    for(int i=0; i<size; i++)
         if(array[i] == value) return 1;
     return 0;
 }
@@ -267,8 +265,8 @@ int contains(int *array, int size, int value)
  */
 long best_individual_idx(Population *pop)
 {
-    long j, idx = 0;
-    for(j=1; j<pop->size; j++)
+    int idx = 0;
+    for(int j=1; j<pop->size; j++)
     {
         if(pop->ind[j].fitness < pop->ind[idx].fitness)
             idx = j;
@@ -284,10 +282,9 @@ int read_diff_file(NetworkModel* model, const char* fname)
 {
     // Set all vertices/edges to active
     // and increase model ID
-    int i;
-    for(i=0; i<model->vcount; i++)
+    for(int i=0; i<model->vcount; i++)
         model->vertices[i].active = 1;
-    for(i=0; i<model->ecount; i++)
+    for(int i=0; i<model->ecount; i++)
         model->edges[i].active = 1;
     model->id += 1;
 
@@ -307,7 +304,7 @@ int read_diff_file(NetworkModel* model, const char* fname)
         {
             int src = atoi(strtok(NULL, ","));
             int dst = atoi(strtok(NULL, ","));
-            for(i=0; i<model->ecount; i++)
+            for(int i=0; i<model->ecount; i++)
             {
                 if(model->edges[i].src == src && model->edges[i].dst == dst)
                 {
@@ -422,14 +419,13 @@ int write_meta_header(time_t timing, int pi_trigger, char* fname)
 int write_fitness_ext(Fitness_ext *values, int size, char* fname)
 {
     FILE *f;
-    long i;
     f = fopen(fname, "a");
     if(f==NULL)
     {
         printf("Unable to open file '%s' for writing.\n", fname);
         return -1;
     }
-    for(i=0; i<size; i++)
+    for(int i=0; i<size; i++)
         fprintf(f, "%ld,%ld,%ld,%ld,%ld,%ld\n", values[i].fitness, values[i].ecount, values[i].edges_unweighted, values[i].edges_weighted, values[i].vcount, values[i].n_mons);
     fclose(f);
     return 1;
@@ -468,14 +464,13 @@ int write_generation_data(Generation_data* data, int size, char* fname)
 int write_generation_fitness(Population* pop, NetworkModel* model, char* fname)
 {
     FILE *f;
-    long i;
     f = fopen(fname, "a");
     if(f==NULL)
     {
         printf("Unable to open file '%s' for writing.\n", fname);
         return -1;
     }
-    for(i=0; i<pop->size; i++)
+    for(int i=0; i<pop->size; i++)
     {
         if(i == (pop->size - 1))
             fprintf(f, "%ld\n", fitness(&pop->ind[i], model));
@@ -494,14 +489,13 @@ int write_generation_fitness(Population* pop, NetworkModel* model, char* fname)
 int write_fitness(Fitness *values, int size, char* fname)
 {
     FILE *f;
-    long i;
     f = fopen(fname, "a");
     if(f==NULL)
     {
         printf("Unable to open file '%s' for writing.\n", fname);
         return -1;
     }
-    for(i=0; i<size; i++)
+    for(int i=0; i<size; i++)
     {
         fprintf(f, "%ld\n", values[i]);
     }
@@ -523,7 +517,7 @@ float frand(float to)
 long active_edges(NetworkModel *model)
 {
     long edges = 0;
-    for(long i=0; i<model->ecount; i++)  
+    for(int i=0; i<model->ecount; i++)  
         if(model->edges[i].active)
             edges += 1;
     return edges;
@@ -535,7 +529,7 @@ long active_edges(NetworkModel *model)
 long active_nodes(NetworkModel *model)
 {
     long nodes = 0;
-    for(long i=0; i<model->vcount; i++)   
+    for(int i=0; i<model->vcount; i++)   
         if(model->vertices[i].active)
             nodes += 1;
     return nodes;
@@ -547,7 +541,7 @@ long active_nodes(NetworkModel *model)
 int uncovered_edges(Individual *ind, NetworkModel *model)
 {
     int u_edges = 0;
-    for(long i=0; i<model->ecount; i++)
+    for(int i=0; i<model->ecount; i++)
     {
         if(!model->edges[i].active)
             continue;
@@ -564,7 +558,7 @@ int penalty(Individual *ind, NetworkModel *model)
 {
     int pen = 0;
     int factor = 2;
-    for(long i=0; i<model->ecount; i++)
+    for(int i=0; i<model->ecount; i++)
     {
         if(ind->values[model->edges[i].src] == 0 && ind->values[model->edges[i].dst] == 0)
         {
@@ -584,9 +578,11 @@ Fitness_ext fitness_ext(Individual *ind, NetworkModel *model)
 {
     Fitness_ext retval;
     retval.n_mons = 0;
-    for(long i=0; i<ind->size; i++)
+    for(int i=0; i<ind->size; i++)
+    {
         if(model->vertices[i].active)
             retval.n_mons += ind->values[i];
+    }
     retval.edges_weighted = penalty(ind, model);
     retval.fitness = retval.n_mons + retval.edges_weighted;
     retval.edges_unweighted = uncovered_edges(ind, model);
@@ -602,7 +598,7 @@ Fitness_ext fitness_ext(Individual *ind, NetworkModel *model)
 Fitness fitness(Individual *ind, NetworkModel *model)
 {
     Fitness pen, fit = 0;
-    for(long i=0; i<ind->size; i++)
+    for(int i=0; i<ind->size; i++)
     {
         if(!model->vertices[i].active)
             continue;
@@ -618,8 +614,7 @@ Fitness fitness(Individual *ind, NetworkModel *model)
 void create_null_individual(Individual *ind, int size)
 {
     ind->values = malloc(sizeof(Gene) * size);
-    long i;
-    for(i=0; i<size; i++)
+    for(int i=0; i<size; i++)
     {
         ind->values[i] = 0;
     }
@@ -653,8 +648,8 @@ Generation_data create_generation_data(Population* pop, NetworkModel* model)
     {
         Fitness_ext tmp = fitness_ext(&pop->ind[i], model);
         edges_weighted[i] = tmp.edges_weighted;
-        edges_unweighted[i] = 1 - (tmp.edges_unweighted / (double)model->ecount);
-        n_mons[i] = tmp.n_mons / (double)model->ecount;
+        edges_unweighted[i] = 1 - (tmp.edges_unweighted / (double)tmp.ecount);
+        n_mons[i] = tmp.n_mons / (double)tmp.ecount;
 
     }
     Generation_data data;
@@ -680,8 +675,7 @@ void free_individual(Individual *ind)
  */
 void free_population(Population *pop)
 {
-    long i;
-    for(i=0; i<pop->size; i++)
+    for(int i=0; i<pop->size; i++)
         free_individual(&pop->ind[i]);
     free(pop->ind);
 }
@@ -732,8 +726,7 @@ void print_config(struct ea_parameters *params)
 void print_individual(Individual *ind)
 {
     printf("Individual: [");
-    long i;
-    for(i=0; i<ind->size; i++)
+    for(int i=0; i<ind->size; i++)
     {
         if(i) printf(" ");
         printf("%d", ind->values[i]);
@@ -747,8 +740,8 @@ void print_individual(Individual *ind)
  */
 int bitflip_mutation(Individual *ind, float p)
 {
-    long i, c=0;
-    for(i = 0; i<ind->size; i++)
+    int c=0;
+    for(int i=0; i<ind->size; i++)
     {
         if(frand(1.0) < p)
         {
@@ -764,8 +757,7 @@ int bitflip_mutation(Individual *ind, float p)
  */
 void uniform_crossover(Individual *p1, Individual *p2, Individual *c1, Individual *c2)
 {
-    long i;
-    for(i = 0; i<p1->size; i++)
+    for(int i=0; i<p1->size; i++)
     {
         if(rand() % 2)
         {
@@ -789,8 +781,7 @@ void uniform_crossover(Individual *p1, Individual *p2, Individual *c1, Individua
 int tournament_selection(Population *pop, int tournsize)
 {
     int best = rand() % pop->size;
-    long i;
-    for(i=1; i<tournsize; i++)
+    for(int i=1; i<tournsize; i++)
     {
         int choice = rand() % pop->size;
         if(pop->ind[choice].fitness < pop->ind[best].fitness)
@@ -806,8 +797,7 @@ int tournament_selection(Population *pop, int tournsize)
 double population_fitness_mean(Population *pop)
 {
     Fitness sum = 0;
-    long i;
-    for(i=0; i<pop->size; i++)
+    for(int i=0; i<pop->size; i++)
         sum += pop->ind[i].fitness;
     return (sum / (double)pop->size);
 }
@@ -818,8 +808,7 @@ double population_fitness_mean(Population *pop)
 double population_fitness_min(Population *pop)
 {
     double min = pop->ind[0].fitness;
-    int i;
-    for(i=1; i<pop->size; i++)
+    for(int i=1; i<pop->size; i++)
     {
         if(pop->ind[i].fitness < min)
             min = pop->ind[i].fitness;
@@ -833,8 +822,7 @@ double population_fitness_min(Population *pop)
 double population_fitness_max(Population *pop)
 {
     double max = pop->ind[0].fitness;
-    long i;
-    for(i=1; i<pop->size; i++)
+    for(int i=1; i<pop->size; i++)
     {
         if(pop->ind[i].fitness > max)
             max = pop->ind[i].fitness;
@@ -861,10 +849,9 @@ double fitness_mean(double *arr, int size)
  */
 double fitness_stdev(double *arr, int size)
 {
-    int i;
     double sum = 0;
     double mean = fitness_mean(arr, size);
-    for(i=0; i<size; i++)
+    for(int i=0; i<size; i++)
         sum += pow(arr[i] - mean, 2);
     return sqrt(sum / (double)size);
 }
@@ -874,10 +861,9 @@ double fitness_stdev(double *arr, int size)
  */
 double population_fitness_stdev(Population *pop)
 {
-    long i;
     double sum = 0;
     double m = population_fitness_mean(pop);
-    for(i=0; i<pop->size; i++)
+    for(int i=0; i<pop->size; i++)
         sum += pow(pop->ind[i].fitness - m, 2);
     return sqrt(sum / (double)pop->size);
 }
@@ -905,17 +891,16 @@ void print_stats(Population *pop, int gen, long nevals, long nevals_ls, int prin
  */
 void print_model(NetworkModel *model)
 {
-    int i;
     printf("<NetworkModel>\n");
     printf("\t<ID>%ld</ID>\n", model->id);
     printf("\t<Vcount>%ld</Vcount>\n", model->vcount);
     printf("\t<Ecount>%ld</Ecount>\n", model->ecount);
     printf("\t<Vertices>\n");
-    for(i=0; i<model->vcount; i++)
+    for(int i=0; i<model->vcount; i++)
         printf("\t\t<Vertex id=%d active=%d />\n", model->vertices[i].id, model->vertices[i].active);
     printf("\t</Vertices>\n");
     printf("\t<Edges>\n");
-    for(i=0; i<model->ecount; i++)
+    for(int i=0; i<model->ecount; i++)
         printf("\t\t<Edge src=%d dst=%d w=%d active=%d/>\n", model->edges[i].src, model->edges[i].dst, model->edges[i].w, model->edges[i].active);
     printf("\t</Edges>\n");
     printf("</NetworkModel>\n");
@@ -943,7 +928,6 @@ int cleanup(Population *pop, NetworkModel *model, Fitness *fitvals, Diversity *d
  */
 int check_model_files(char* basefile, int changes, int verbose, int continuous)
 {
-    int i;
     int check;
     // First read basefile
     NetworkModel base;
@@ -955,7 +939,7 @@ int check_model_files(char* basefile, int changes, int verbose, int continuous)
         return -1;
     }
     // Then, check all other files
-    for(i=0; i<=changes; i++)
+    for(int i=0; i<=changes; i++)
     {
         char* fname = replace_model(basefile, i);
         if(!fname)
@@ -1009,14 +993,13 @@ long localsearch(Individual *ind, int k, NetworkModel *model, Fitness *fitvals, 
         k = ind->size;
     }
     int neighbors[ind->size];
-    long i;
     int foundbetter;
     Fitness best_fitness = ind->fitness;
     do
     {
         distinct_random_values(neighbors, ind->size);
         foundbetter = 0;
-        for(i=0; i<k; i++)
+        for(int i=0; i<k; i++)
         {
             ind->values[neighbors[i]] = !ind->values[neighbors[i]];
             Fitness fit = fitness(ind, model);
@@ -1057,7 +1040,6 @@ long localsearch(Individual *ind, int k, NetworkModel *model, Fitness *fitvals, 
  */
 int run_continuous(struct ea_parameters* params)
 {
-    long i = 0;
     if(params->filecheck)
     {    
         if(params->verbose)
@@ -1088,8 +1070,7 @@ int run_continuous(struct ea_parameters* params)
     {
         print_config(params);
         int active = 0;
-        int k;
-        for(k=0; k<model.vcount; k++)
+        for(int k=0; k<model.vcount; k++)
             if(model.vertices[k].active)
                 active++;
         printf("Read file '%s' having |V| = %ld (%d active), |E| = %ld @ %d evals\n", replace_model(params->inputfname, 0), model.vcount, active, model.ecount, 0);
@@ -1116,13 +1097,13 @@ int run_continuous(struct ea_parameters* params)
     pop.ind = malloc(sizeof(Individual) * pop._memsize);
     time_t run_start_time = time(NULL);
     //#pragma omp parallel for
-    for(i=0; i<params->popsize; i++)
+    for(int i=0; i<params->popsize; i++)
     {
         Individual ind;
         create_random_individual(&ind, model.vcount);
         pop.ind[pop.size++] = ind;
     }
-    for(i=0; i<pop.size; i++)
+    for(int i=0; i<pop.size; i++)
     {
         pop.ind[i].fitness = fitness(&pop.ind[i], &model);
         if(params->genfname)
@@ -1146,8 +1127,7 @@ int run_continuous(struct ea_parameters* params)
     {
         diversity._memsize = params->pi_width;
         diversity.values = malloc(sizeof(Fitness) * diversity._memsize);
-        int k;
-        for(k=0; k<diversity._memsize; k++)
+        for(int k=0; k<diversity._memsize; k++)
             diversity.values[k] = 0;
         diversity.next = 0;
     }
@@ -1158,9 +1138,8 @@ int run_continuous(struct ea_parameters* params)
 
     long pi_triggered = 0;
     // start of the generational process
-    for(i=0; ; i++)
+    for(int i=0; ; i++)
     {
-        int j;
         int injected = 0;
         long ls_nevals = 0;
         // local search
@@ -1196,7 +1175,7 @@ int run_continuous(struct ea_parameters* params)
             ls_nevals = nevals - ls_nevals;
         }
         // choose parents and perform crossover + mutation on children
-        for(j=0; j<params->popsize; j = j + 2)
+        for(int j=0; j<params->popsize; j = j + 2)
         {
             if(nevals >= params->max_evals)
             {
@@ -1293,7 +1272,7 @@ int run_continuous(struct ea_parameters* params)
         // Determine survivor indices using selection operation
         // TODO: How to ensure uniqueness? Floyd Algorithm?
         int surv_idx[params->popsize];
-        for(j=0; j<params->popsize; j++)
+        for(int j=0; j<params->popsize; j++)
         {
             int s;
             do
@@ -1304,7 +1283,7 @@ int run_continuous(struct ea_parameters* params)
             surv_idx[j] = s;
         }
         // pick survivors from the population and free dying individuals memory
-        for(j=pop.size-1; j>=0; j--)
+        for(int j=pop.size-1; j>=0; j--)
         {
             if(!contains(surv_idx, params->popsize, j))
             {
@@ -1322,8 +1301,7 @@ int run_continuous(struct ea_parameters* params)
             if(pi_necessary(&diversity, params->pi_threshold))
             {
                 pi_triggered += 1;
-                int k;
-                for(k=0; k<params->pi_size; k++)
+                for(int k=0; k<params->pi_size; k++)
                 {
                     if(nevals >= params->max_evals)
                         break;
@@ -1363,7 +1341,6 @@ int run_default(struct ea_parameters* params)
 {
     if(params->genfname)
         printf("##### WARNING: Generation output feature not implemented yet in default EA mode! Use continuous mode to use it!\n");
-    long i = 0;
     long change_eval;
     char *current_model_fname;
     if(params->model_changes == 0)
@@ -1410,8 +1387,7 @@ int run_default(struct ea_parameters* params)
     {
         print_config(params);
         int active = 0;
-        int k;
-        for(k=0; k<model.vcount; k++)
+        for(int k=0; k<model.vcount; k++)
             if(model.vertices[k].active)
                 active++;
         printf("Read file '%s' having |V| = %ld (%d active), |E| = %ld @ %d evals\n", current_model_fname, model.vcount, active, model.ecount, 0);
@@ -1432,7 +1408,7 @@ int run_default(struct ea_parameters* params)
     pop.ind = malloc(sizeof(Individual) * pop._memsize);
     time_t run_start_time = time(NULL);
     //#pragma omp parallel for
-    for(i=0; i<params->popsize; i++)
+    for(int i=0; i<params->popsize; i++)
     {
         Individual ind;
         create_random_individual(&ind, model.vcount);
@@ -1454,8 +1430,7 @@ int run_default(struct ea_parameters* params)
     {
         diversity._memsize = params->pi_width;
         diversity.values = malloc(sizeof(Fitness) * diversity._memsize);
-        int k;
-        for(k=0; k<diversity._memsize; k++)
+        for(int k=0; k<diversity._memsize; k++)
             diversity.values[k] = 0;
         diversity.next = 0;
     }
@@ -1466,9 +1441,8 @@ int run_default(struct ea_parameters* params)
 
     long pi_triggered = 0;
     // start of the generational process
-    for(i=0; ; i++)
+    for(int i=0; ; i++)
     {
-        int j;
         int injected = 0;
         long ls_nevals = 0;
         // local search
@@ -1516,13 +1490,11 @@ int run_default(struct ea_parameters* params)
             if(params->verbose)
             {   
                 int active = 0;
-                int k;
-                for(k=0; k<model.vcount; k++)
+                for(int k=0; k<model.vcount; k++)
                     active += model.vertices[k].active;
                 printf("Read file '%s' having |V| = %ld (%d active), |E| = %ld @ %d evals\n", current_model_fname, model.vcount, active, model.ecount, nevals);
             }
-            int k;
-            for(k=0; k<pop.size; k++)
+            for(int k=0; k<pop.size; k++)
             {
                 if(nevals >= params->max_evals)
                     break;
@@ -1537,7 +1509,7 @@ int run_default(struct ea_parameters* params)
             }
         }
         // choose parents and perform crossover + mutation on children
-        for(j=0; j<params->popsize; j = j + 2)
+        for(int j=0; j<params->popsize; j = j + 2)
         {
             if(nevals >= params->max_evals)
             {
@@ -1601,13 +1573,11 @@ int run_default(struct ea_parameters* params)
                 if(params->verbose)
                 {   
                     int active = 0;
-                    int k;
-                    for(k=0; k<model.vcount; k++)
+                    for(int k=0; k<model.vcount; k++)
                         active += model.vertices[k].active;
                     printf("Read file '%s' having |V| = %ld (%d active), |E| = %ld @ %d evals\n", current_model_fname, model.vcount, active, model.ecount, nevals);
                 }
-                int k;
-                for(k=0; k<pop.size; k++)
+                for(int k=0; k<pop.size; k++)
                 {
                     if(nevals >= params->max_evals)
                         break;
@@ -1668,13 +1638,11 @@ int run_default(struct ea_parameters* params)
                 if(params->verbose)
                 {
                     int active = 0;
-                    int k;
-                    for(k=0; k<model.vcount; k++)
+                    for(int k=0; k<model.vcount; k++)
                         active += model.vertices[k].active;
                     printf("Read file '%s' having |V| = %ld (%d active), |E| = %ld @ %d evals\n", current_model_fname, model.vcount, active, model.ecount, nevals);
                 }
-                int k;
-                for(k=0; k<pop.size; k++)
+                for(int k=0; k<pop.size; k++)
                 {
                     if(nevals >= params->max_evals)
                         break;
@@ -1692,7 +1660,7 @@ int run_default(struct ea_parameters* params)
         // Determine survivor indices using selection operation
         // TODO: How to ensure uniqueness? Floyd Algorithm?
         int surv_idx[params->popsize];
-        for(j=0; j<params->popsize; j++)
+        for(int j=0; j<params->popsize; j++)
         {
             int s;
             do
@@ -1703,7 +1671,7 @@ int run_default(struct ea_parameters* params)
             surv_idx[j] = s;
         }
         // pick survivors from the population and free dying individuals memory
-        for(j=pop.size-1; j>=0; j--)
+        for(int j=pop.size-1; j>=0; j--)
         {
             if(!contains(surv_idx, params->popsize, j))
             {
@@ -1721,8 +1689,7 @@ int run_default(struct ea_parameters* params)
             if(pi_necessary(&diversity, params->pi_threshold))
             {
                 pi_triggered += 1;
-                int k;
-                for(k=0; k<params->pi_size; k++)
+                for(int k=0; k<params->pi_size; k++)
                 {
                     if(nevals >= params->max_evals)
                         break;
@@ -1759,24 +1726,21 @@ int run_default(struct ea_parameters* params)
                         if(params->verbose)
                         {    
                             int active = 0; 
-                            int k;
-                            for(k=0; k<model.vcount; k++) 
-                                active += model.vertices[k].active;
+                            for(int l=0; l<model.vcount; l++) 
+                                active += model.vertices[l].active;
                             printf("Read file '%s' having |V| = %ld (%d active), |E| = %ld @ %d evals\n", current_model_fname, model.vcount, active, model.ecount, nevals);
                         }    
-                        // TODO: Double declaration of k???
-                        int k;
-                        for(k=0; k<pop.size; k++) 
+                        for(int l=0; l<pop.size; l++) 
                         {    
                             if(nevals >= params->max_evals)
                                 break;
-                            pop.ind[k].fitness = fitness(&pop.ind[k], &model);
+                            pop.ind[l].fitness = fitness(&pop.ind[l], &model);
                             if(params->savefname)
                             {
                                 if(params->extended_write)
-                                    fitvals_ext[nevals++] = fitness_ext(&pop.ind[k], &model);
+                                    fitvals_ext[nevals++] = fitness_ext(&pop.ind[l], &model);
                                 else
-                                    fitvals[nevals++] = pop.ind[k].fitness;
+                                    fitvals[nevals++] = pop.ind[l].fitness;
                             }
                             else
                                 nevals++;
