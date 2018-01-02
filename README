@@ -2,6 +2,14 @@ For a default run, execute:
     ./monsel -f -n 10000 -v testfiles/delaunay_n10.csv
 For a continuous run, execute:
     ./monsel -f -n 1000 -v -c testfiles/small_example_0.2/delaunay_n10_base.csv
+For a continuous run saving generation information, execute:
+    ./monsel -f -n 1000 -v -q generation.csv -c testfiles/small_example_0.2/delaunay_n10_base.csv
+For a continuous AND random run, execute:
+    ./monsel -r -f -n 1000 -v -c testfiles/small_example_0.2/delaunay_n10_base.csv
+For a continuous AND random run saving results to a file, execute:
+    ./monsel -r -f -n 1000 -v -w output.csv -c testfiles/small_example_0.2/delaunay_n10_base.csv
+For a continuous AND random run saving extended results to a file, execute:
+    ./monsel -r -f -n 1000 -v -e -w output.csv -c testfiles/small_example_0.2/delaunay_n10_base.csv
 
 More help is available using 
     ./monsel --help

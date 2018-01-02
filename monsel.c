@@ -75,6 +75,7 @@ struct ea_parameters {
     char* inputfname;
     char* savefname;
     char* genfname;
+    int random;
     int filecheck;
     int extended_write;
     int verbose;
@@ -127,6 +128,7 @@ static struct argp_option options[] =
     {"continuous", 'c', 0, 0, "Runs as continuous optimization, i.e., change model every evaluation. (default: no)"},
     {"output", 'w', "FILE", 0, "Fitness value output file (one value per line)"},
     {"gen-output", 'q', "FILE", 0, "Extended fitness value output file for the whole generation (one generation per line using the given FILE)"},
+    {"full-random", 'r', 0, 0, "Switch on full random mode, evaluating the defined amount of individuals without using LS/PI/EA. WARNING: Overwrites all other LS, EA, PI parameters! (default: no)"},
     {0}
 };
 
@@ -152,6 +154,7 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
         case 'y': params->pi_threshold = arg ? atof(arg) : 0.0; break;
         case 'o': params->pi_size = arg ? atol(arg) : 0; break;
         case 'z': params->model_changes = arg ? atol(arg) : 0; break;
+        case 'r': params->random = 1; break;
         case ARGP_KEY_END: if(state->arg_num < 1) argp_usage(state); break;
         case ARGP_KEY_ARG: if(state->arg_num > 1) argp_usage(state); else params->inputfname = arg; break;
         default: return ARGP_ERR_UNKNOWN;
@@ -717,6 +720,7 @@ void print_config(struct ea_parameters *params)
         printf("\tInjection threshold:\t%.4f\n", params->pi_threshold);
         printf("\tInjection size:\t\t%ld\n", params->pi_size);
     }
+    printf("\tRandom mode:\t\t%s\n", params->random ? "yes" : "no");
     printf("</Experiment parameters>\n");
 }
 
@@ -1756,6 +1760,84 @@ int run_default(struct ea_parameters* params)
     return 0;
 }
 
+/*
+ * Runs the fully random version of the monitor selection optimizer.
+ * WARNING: This does only pick random individuals without any optimization!
+ */
+int run_random(struct ea_parameters* params)
+{
+    if(!params->continuous)
+    {
+        printf("WARNING: Only continuous version supported!\n");
+        exit(EXIT_FAILURE);
+    }
+    if(params->filecheck)
+    {    
+        if(params->verbose)
+            printf("checking model files...\n");
+        if(check_model_files(params->inputfname, params->max_evals, params->verbose, params->continuous) == -1)
+        {
+            printf("ERROR: not all files are present, aborting!\n");
+            exit(EXIT_FAILURE);
+        }
+    }
+    NetworkModel model;
+    if(read_full_file(&model, params->inputfname) == -1)
+    {
+        printf("Error reading file '%s', aborting\n", params->inputfname);
+        exit(EXIT_FAILURE);
+    }
+    if(model.ecount == 0 || model.vcount == 0)
+    {
+        printf("Either no edge or vertex in file '%s', aborting\n", params->inputfname);
+        exit(EXIT_FAILURE);
+    }
+    if(read_diff_file(&model, replace_model(params->inputfname, 0)) == -1)
+    {
+        printf("Error reading file '%s', aborting\n", replace_model(params->inputfname, 0));
+        exit(EXIT_FAILURE);
+    }
+    time_t run_start_time = time(NULL);
+    Fitness* fitvals = NULL;
+    Fitness_ext* fitvals_ext = NULL;
+    if(params->savefname)
+    {
+        if(params->extended_write)
+            fitvals_ext = malloc(sizeof(Fitness_ext) * params->max_evals);
+        else
+            fitvals = malloc(sizeof(Fitness) * params->max_evals);
+    }
+    for(int i=0; i<params->popsize; i++)
+    {
+        Individual ind;
+        create_random_individual(&ind, model.vcount);
+        if(params->savefname)
+        {
+            if(params->extended_write)
+                fitvals_ext[i] = fitness_ext(&ind, &model);
+            else
+                fitvals[i] = fitness(&ind, &model);
+        }
+        read_diff_file(&model, replace_model(params->inputfname, model.id + 1));
+    }
+    if(params->savefname)
+    {
+        if(params->verbose)
+            printf("Saving %ld individuals' fitness values to file %s\n", params->popsize, params->savefname);
+        write_meta_header(time(NULL) - run_start_time, 0, params->savefname);
+        if(params->extended_write)
+            write_fitness_ext(fitvals_ext, params->popsize, params->savefname);
+        else
+            write_fitness(fitvals, params->popsize, params->savefname);
+    }
+    if(fitvals_ext)
+        free(fitvals_ext);
+    if(fitvals)
+        free(fitvals);
+    return 0;
+}
+
+
 int main(int argc, char**argv)
 {
     srand(time(NULL));
@@ -1778,11 +1860,14 @@ int main(int argc, char**argv)
     params.pi_width = 1;
     params.pi_threshold = 0.0;
     params.pi_size = 100;
+    params.random = 0;
 
     argp_parse(&argp, argc, argv, 0, 0, &params);
-    if(params.continuous)
-        run_continuous(&params);
+    if(params.random)
+        return run_random(&params);
+    else if(params.continuous)
+        return run_continuous(&params);
     else
-        run_default(&params);
+        return run_default(&params);
     return 0;
 }
