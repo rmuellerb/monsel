@@ -1807,7 +1807,7 @@ int run_random(struct ea_parameters* params)
         else
             fitvals = malloc(sizeof(Fitness) * params->max_evals);
     }
-    for(int i=0; i<params->popsize; i++)
+    for(int i=0; i<params->max_evals; i++)
     {
         Individual ind;
         create_random_individual(&ind, model.vcount);
@@ -1826,9 +1826,9 @@ int run_random(struct ea_parameters* params)
             printf("Saving %ld individuals' fitness values to file %s\n", params->popsize, params->savefname);
         write_meta_header(time(NULL) - run_start_time, 0, params->savefname);
         if(params->extended_write)
-            write_fitness_ext(fitvals_ext, params->popsize, params->savefname);
+            write_fitness_ext(fitvals_ext, params->max_evals, params->savefname);
         else
-            write_fitness(fitvals, params->popsize, params->savefname);
+            write_fitness(fitvals, params->max_evals, params->savefname);
     }
     if(fitvals_ext)
         free(fitvals_ext);
