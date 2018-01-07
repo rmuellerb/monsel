@@ -570,6 +570,26 @@ int penalty(Individual *ind, NetworkModel *model)
 }
 
 /*
+ * Fills the given variables with the amount of uncovered edges and the penalty value
+ */
+void uncovered_edges_and_penalty(Individual* ind, NetworkModel *model, long* u_edges, long* pen)
+{
+    (*u_edges) = 0;
+    (*pen) = 0;
+    int factor = 2;
+    for(int i=0; i<model->ecount; i++)
+    {
+        if(!model->edges[i].active)
+            continue;
+        if(ind->values[model->edges[i].src] == 0 && ind->values[model->edges[i].dst] == 0)
+        {
+            (*pen) += (factor * model->edges[i].w);
+            (*u_edges) += 1;
+        }
+    }
+}
+
+/*
  * Calculates and returns the fitness value struct, containing the fitness value, the 
  * number of uncovered edges and the number of monitors according to the given
  * edge model and individual.
@@ -583,9 +603,10 @@ Fitness_ext fitness_ext(Individual *ind, NetworkModel *model)
         if(model->vertices[i].active)
             retval.n_mons += ind->values[i];
     }
-    retval.edges_weighted = penalty(ind, model);
+    //retval.edges_weighted = penalty(ind, model);
+    //retval.edges_unweighted = uncovered_edges(ind, model);
+    uncovered_edges_and_penalty(ind, model, &retval.edges_unweighted, &retval.edges_weighted);
     retval.fitness = retval.n_mons + retval.edges_weighted;
-    retval.edges_unweighted = uncovered_edges(ind, model);
     retval.vcount = active_nodes(model);
     retval.ecount = active_edges(model);
     return retval;
