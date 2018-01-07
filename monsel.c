@@ -47,7 +47,11 @@ typedef struct NetworkModel {
     Edge *edges;
     Vertex *vertices;
     long ecount;
+    long active_ecount;
+    int *inactive_edge_idx;
     long vcount;
+    long active_vcount;
+    int *inactive_vertex_idx;
 } NetworkModel;
 
 typedef struct Individual {
@@ -287,6 +291,8 @@ int read_diff_file(NetworkModel* model, const char* fname)
         model->vertices[i].active = 1;
     for(int i=0; i<model->ecount; i++)
         model->edges[i].active = 1;
+    model->active_ecount = model->ecount;
+    model->active_vcount = model->vcount;
     model->id += 1;
 
     // Read diff from file
@@ -310,6 +316,8 @@ int read_diff_file(NetworkModel* model, const char* fname)
                 if(model->edges[i].src == src && model->edges[i].dst == dst)
                 {
                     model->edges[i].active = 0;
+                    model->inactive_edge_idx[model->ecount - model->active_ecount] = i;
+                    model->active_ecount = model->active_ecount - 1;
                     diffs += 1;
                     break;
                 }
@@ -319,6 +327,8 @@ int read_diff_file(NetworkModel* model, const char* fname)
         {
             int id = atoi(strtok(NULL, ","));
             model->vertices[id].active = 0;
+            model->inactive_vertex_idx[model->vcount - model->active_vcount] = id;
+            model->active_vcount = model->active_vcount - 1;
             diffs += 1;
         }
         else
@@ -326,7 +336,6 @@ int read_diff_file(NetworkModel* model, const char* fname)
     }
     fclose(fp);
     if(line) free(line);
-    //printf("Read network model '%d' diff with %d diffs\n", model->id, diffs);
     return diffs;
 }
 
@@ -343,9 +352,8 @@ int read_full_file(NetworkModel *model, const char* fname)
     size_t len = 0;
     ssize_t read;
     long j=0, i=0, ecount = 0, vcount = 0;
-    char* tmp;
     fp = fopen(fname, "r");
-    if (fp == NULL)
+    if(fp == NULL)
         return -1;
     while ((read = getline(&line, &len, fp)) != -1) {
         if(line[0] == 'E')
@@ -355,12 +363,17 @@ int read_full_file(NetworkModel *model, const char* fname)
     }
     model->id = -1;
     model->ecount = ecount;
+    model->active_ecount = ecount;
     model->vcount = vcount;
+    model->active_vcount = vcount;
     rewind(fp);
     Vertex *vertices;
     vertices = malloc(sizeof(Vertex) * vcount);
     Edge *edges;
     edges = malloc(sizeof(Edge) * ecount);
+    model->inactive_edge_idx = malloc(sizeof(int) * ecount);
+    model->inactive_vertex_idx = malloc(sizeof(int) * vcount);
+
     while ((read = getline(&line, &len, fp)) != -1) {
         char* class = strtok(line, ",");
         if((*class) == 'E')
@@ -374,18 +387,11 @@ int read_full_file(NetworkModel *model, const char* fname)
         else if((*class) == 'V')
         {
             vertices[j].id = atoi(strtok(NULL, ","));
-            if((tmp = strtok(NULL, ",")) != NULL)
-            {
-                if(strcmp(tmp, "active\n") == 0)
-                    vertices[j].active = 1;
-                else
-                    vertices[j].active = 0;
-            }
-            else
-                vertices[j].active = 1;
+            vertices[j].active = 1;
             j++;
         }
     }
+
     model->edges = edges;
     model->vertices = vertices;
     fclose(fp);
@@ -517,11 +523,7 @@ float frand(float to)
  */
 long active_edges(NetworkModel *model)
 {
-    long edges = 0;
-    for(int i=0; i<model->ecount; i++)  
-        if(model->edges[i].active)
-            edges += 1;
-    return edges;
+    return model->active_ecount;
 }
 
 /*
@@ -529,11 +531,7 @@ long active_edges(NetworkModel *model)
  */
 long active_nodes(NetworkModel *model)
 {
-    long nodes = 0;
-    for(int i=0; i<model->vcount; i++)   
-        if(model->vertices[i].active)
-            nodes += 1;
-    return nodes;
+    return model->active_vcount;
 }
 
 /*
@@ -689,6 +687,8 @@ void free_model(NetworkModel *model)
 {
     free(model->edges);
     free(model->vertices);
+    free(model->inactive_edge_idx);
+    free(model->inactive_vertex_idx);
 }
 
 /*
@@ -980,10 +980,7 @@ int decrement_change_countdown(long* countdown, NetworkModel* model, struct ea_p
         }
         if(params->verbose)
         {
-            long active = 0;
-            for (int k=0; k<model->vcount; k++)
-                active += model->vertices[k].active;
-            printf("Read file '%s' having |V| = %ld (%ld active), |E| = %ld @ %ld evals\n", replace_model_name(params->inputfname, model->id), model->vcount, active, model->ecount, nevals);
+            printf("Read file '%s' having |V| = %ld (%ld active), |E| = %ld @ %ld evals\n", replace_model_name(params->inputfname, model->id), model->vcount, model->active_vcount, model->ecount, nevals);
         }
         (*countdown) = (long) (params->max_evals / params->modelcount);
         return 1;
@@ -1107,11 +1104,7 @@ int run_default(struct ea_parameters* params)
     if(params->verbose)
     {
         print_config(params);
-        int active = 0;
-        for(int k=0; k<model.vcount; k++)
-            if(model.vertices[k].active)
-                active++;
-        printf("Read file '%s' having |V| = %ld (%d active), |E| = %ld @ %d evals\n", current_model_fname, model.vcount, active, model.ecount, 0);
+        printf("Read file '%s' having |V| = %ld (%ld active), |E| = %ld @ %d evals\n", current_model_fname, model.vcount, model.active_vcount, model.ecount, 0);
     }
 
     Fitness *fitvals = NULL;
@@ -1513,11 +1506,7 @@ int run_random(struct ea_parameters* params)
     if(params->verbose)
     {
         print_config(params);
-        int active = 0;
-        for(int k=0; k<model.vcount; k++)
-            if(model.vertices[k].active)
-                active++;
-        printf("Read file '%s' having |V| = %ld (%d active), |E| = %ld @ %d evals\n", current_model_fname, model.vcount, active, model.ecount, 0);
+        printf("Read file '%s' having |V| = %ld (%ld active), |E| = %ld @ %d evals\n", current_model_fname, model.vcount, model.active_vcount, model.ecount, 0);
     }
     time_t run_start_time = time(NULL);
     Fitness* fitvals = NULL;
