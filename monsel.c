@@ -6,8 +6,6 @@
 #include <argp.h>
 #include <unistd.h>
 
-// TODO: Fix Generation data 
-
 // typedefs and structs
 typedef unsigned char Gene;
 typedef long Fitness;
