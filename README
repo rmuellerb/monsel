@@ -8,22 +8,22 @@ In static problems, there exists one instance of a network which is to be evalua
 The result is either printed using the '-v'/'--verbose' switch, written to disk as fitness values *.csv file using the '-w'/'--write' parameter and/or written as generation information '--gen-write'.
 
 For a default run of a standard EA, execute: 
-    ./monsel --filecheck --nevals 10000 --verbose problems/delaunay_n10_0.2/delaunay_n10_base.csv
+    ./monsel --nevals 10000 --verbose problems/delaunay_n10_base.csv
 
 For a default run of an LS-EA, execute:
-    ./monsel --filecheck --nevals 10000 --verbose --ls --ls_k 10 problems/delaunay_n10_0.2/delaunay_n10_base.csv
+    ./monsel  --nevals 10000 --verbose --ls --ls_k 10 problems/delaunay_n10_base.csv
 
 For a default run of an (LS + PI) EA, execute:
-    ./monsel --filecheck --nevals 10000 --verbose --ls --ls_k 10 --pi --pi-size 100 --pi-width 0 --pi-threshold 100 problems/delaunay_n10_0.2/delaunay_n10_base.csv
+    ./monsel --nevals 10000 --verbose --ls --ls_k 10 --pi --pi-size 100 --pi-width 0 --pi-threshold 100 problems/delaunay_n10_base.csv
 
 For a default run of an LS-EA saving evaluations to res.csv, execute:
-    ./monsel --filecheck --nevals 10000 --verbose --ls --ls_k 10 --write res.csv problems/delaunay_n10_0.2/delaunay_n10_base.csv
+    ./monsel --nevals 10000 --verbose --ls --ls_k 10 --write res.csv problems/delaunay_n10_base.csv
 
 For a default run of an LS-EA saving evaluations to res.csv and generation data to gen.csv, execute:
-    ./monsel --filecheck --nevals 10000 --verbose --ls --ls_k 10 --write res.csv --gen-write gen.csv problems/delaunay_n10_0.2/delaunay_n10_base.csv
+    ./monsel --nevals 10000 --verbose --ls --ls_k 10 --write res.csv --gen-write gen.csv problems/delaunay_n10_base.csv
 
 For a default run of an LS-EA saving extended fitness evaluations to res.csv (format: fitness, ecount, unweighted_edges, weighted_edges, vcount, n_mons) , execute:
-    ./monsel --filecheck --nevals 10000 --verbose --ls --ls_k 10 --extended-write --write res.csv problems/delaunay_n10_0.2/delaunay_n10_base.csv
+    ./monsel --nevals 10000 --verbose --ls --ls_k 10 --extended-write --write res.csv problems/delaunay_n10_base.csv
 
 ########################
 ### dynamic problems ###
@@ -32,12 +32,14 @@ Explanation:
 In 'dynamic' problems, the underlying model changes frequently.
 The change frequency is calculated by the given amount of expected models to occur in the problem and the maximum allowed number of evaluations.
 E.g., in case 10.000 evaluations are permitted and 10 models are to be expected, the model will change every ([nevals] / [models]) = 1.000 evaluations.
+In case you require reproducibility, use the '--seed N' option and use the same seed for all experiments.
+The random number generator of the heuristic remains untouched, just the model diff creation is seeded using this parameter!
 
-For a dynamic run of an LS-EA, having 10 different models ([experiment}_0.csv to [experiment]_9.csv) execute:
-    ./monsel --filecheck --nevals 10000 --models 10 --verbose --ls --ls_k 10 problems/delaunay_n10_0.2/delaunay_n10_base.csv
+For a dynamic run of an LS-EA, having 10 different models with a change level of 25% execute:
+    ./monsel --seed 42 --nevals 10000 --models 10 --changelevel 0.25 --verbose --ls --ls_k 10 problems/delaunay_n10_base.csv
 
-For a dynamic run of an LS-EA, having 10 different models ([experiment}_0.csv to [experiment]_9.csv) writing extended and generation information, execute:
-    ./monsel --filecheck --nevals 10000 --models 10 --verbose --ls --ls_k 10 --extended-write --write res.csv --gen-write gen.csv problems/delaunay_n10_0.2/delaunay_n10_base.csv
+For a dynamic run of an LS-EA, having 10 different models and a change level of 5% writing extended and generation information, execute:
+    ./monsel --seed 42 --nevals 10000 --models 10 --changelevel 0.05 --verbose --ls --ls_k 10 --extended-write --write res.csv --gen-write gen.csv problems/delaunay_n10_base.csv
 
 ###############################
 ### highly dynamic problems ###
@@ -46,17 +48,19 @@ Explanation:
 In a 'highly dynamic run', changes in the search landscape occur swiftly, that it is not possible to reevaluate the population after a model change, until the next model change occurs.
 This is the case if [popsize] >= [nevals] / [models], e.g., if there are more individuals for reevaluation than one model activity time-window.
 Therefore, the switch '-d'/'--dont-reevaluate' surpresses the reevaluation of the population after a model change.
+In case you require reproducibility, use the '--seed N' option and use the same seed for all experiments.
+The random number generator of the heuristic remains untouched, just the model diff creation is seeded using this parameter!
 Warning-1: all evolutionary operations depend on deprecated (fitness) information from previous models, so this is highly experimental!
 Warning-2: if [popsize] >= [nevals] / [models], the switch will be set automatically, as otherwise all evaluations will be used be the reevaluation of the population
 
-For a highly dynamic run of an LS-EA, having 100 different models ([experiment}_0.csv to [experiment]_99.csv) execute:
-    ./monsel --filecheck --nevals 1000 --verbose --ls --ls_k 10 --models 100 --dont-reevaluate problems/delaunay_n10_0.2/delaunay_n10_base.csv
+For a highly dynamic run of an LS-EA, having 100 different models with a change level of 20% execute:
+    ./monsel --seed 42 --nevals 1000 --verbose --ls --ls_k 10 --models 100 --changelevel 0.20 --dont-reevaluate problems/delaunay_n10_base.csv
 
-For a highly dynamic run of an LS-EA, having one model per evaluation ([experiment}_0.csv to [experiment]_999.csv) execute:
-    ./monsel --filecheck --nevals 1000 --verbose --ls --ls_k 10 --models 1000 --dont-reevaluate problems/delaunay_n10_0.2/delaunay_n10_base.csv
+For a highly dynamic run of an LS-EA, having one model per evaluation with a change level of 1% execute:
+    ./monsel --seed 42 --nevals 1000 --verbose --ls --ls_k 10 --models 1000 --changelevel 0.01 --dont-reevaluate problems/delaunay_n10_base.csv
 
-For a highly dynamic run of an LS-EA, having one model per evaluation ([experiment}_0.csv to [experiment]_999.csv) and saving all information to gen.csv and res.csv execute:
-    ./monsel --filecheck --nevals 1000 --verbose --ls --ls_k 10 --models 1000 --dont-reevaluate --extended-write --write res.csv --gen-write gen.csv problems/delaunay_n10_0.2/delaunay_n10_base.csv
+For a highly dynamic run of an LS-EA, having one model per evaluation with a change level of 2% and saving all information to gen.csv and res.csv execute:
+    ./monsel --seed 42 --nevals 1000 --verbose --ls --ls_k 10 --models 1000 --changelevel 0.02 --dont-reevaluate --extended-write --write res.csv --gen-write gen.csv problems/delaunay_n10_base.csv
 
 #####################################
 ### random individuals on problem ###
@@ -64,16 +68,16 @@ For a highly dynamic run of an LS-EA, having one model per evaluation ([experime
 Explanation:
 For some experiments, it is useful to determine whether the heuristic is more effective than just picking random individuals.
 Therefore, the switch '-r'/'--full-random' skips all heuristic parts of the optimization (EA / LS / PI) and just generates random individuals.
-All switches except '--nevals', '--models', '--extended-write', '--write', '--filecheck', and '--verbose' are ignored.
+All switches except '--nevals', '--models', '--changelevel', '--seed', '--extended-write', '--write', '', and '--verbose' are ignored.
 
 For a random static run just creating 10.000 evaluations on one model, execute:
-    ./monsel --filecheck --full-random --nevals 10000 --verbose problems/delaunay_n10_0.2/delaunay_n10_base.csv
+    ./monsel --full-random --nevals 10000 --verbose problems/delaunay_n10_base.csv
 
 For a random static run just creating 10.000 evaluations on one model and write extended results to res.csv, execute:
-    ./monsel --filecheck --full-random --nevals 10000 --verbose --extended-write --write res.csv problems/delaunay_n10_0.2/delaunay_n10_base.csv
+    ./monsel --full-random --nevals 10000 --verbose --extended-write --write res.csv problems/delaunay_n10_base.csv
 
-For a random dynamic run just creating 10.000 evaluations on 10 models and write extended results to res.csv, execute:
-    ./monsel --filecheck --full-random --models 10 --nevals 10000 --verbose --extended-write --write res.csv problems/delaunay_n10_0.2/delaunay_n10_base.csv
+For a random dynamic run just creating 10.000 evaluations on 10 models having a change level of 10% and write extended results to res.csv, execute:
+    ./monsel --full-random --models 10 --changelevel 0.10 --nevals 10000 --verbose --extended-write --write res.csv problems/delaunay_n10_base.csv
 
-For a random highly dynamic run just creating 10.000 evaluations on 10 models and write extended results to res.csv, execute:
-    ./monsel --filecheck --full-random --models 1000 --nevals 1000 --verbose --extended-write --write res.csv problems/delaunay_n10_0.2/delaunay_n10_base.csv
+For a random highly dynamic run just creating 10.000 evaluations on 10 models with a change level of 25% and write extended results to res.csv, execute:
+    ./monsel --full-random --models 1000 --changelevel 0.25 --nevals 1000 --verbose --extended-write --write res.csv problems/delaunay_n10_base.csv

@@ -7,21 +7,19 @@
 #include <stdint.h>
 #include <unistd.h>
 
+// TODO: Use adjacency list in penalty?
+
 // typedefs and structs
 typedef uint8_t Gene;
 typedef long Fitness;
-typedef unsigned long Ecount;
-typedef unsigned long Vcount;
-typedef unsigned long Mcount;
-typedef unsigned long Pcount;
 
 typedef struct Fitness_ext {
     Fitness fitness;
-    Ecount ecount;
-    Vcount vcount;
+    unsigned long ecount;
+    unsigned long vcount;
     long edges_weighted;
     long edges_unweighted;
-    Vcount n_mons;
+    unsigned long n_mons;
 } Fitness_ext;
 
 typedef struct Generation_data {
@@ -34,45 +32,45 @@ typedef struct Generation_data {
 } Generation_data;
 
 typedef struct Vertex {
-    Vcount id;
+    unsigned long id;
     uint8_t active;
 } Vertex;
 
 typedef struct Edge {
-    Vcount src;
-    Vcount dst;
+    unsigned long src;
+    unsigned long dst;
     uint8_t w;
     uint8_t active;
 } Edge;
 
 typedef struct AdjacencyList {
-    long* edge_indices;
+    unsigned long* edge_indices;
     unsigned int size;
 } AdjacencyList;
 
 typedef struct NetworkModel {
-    Mcount id;
+    unsigned long id;
     Edge *edges;
     Vertex *vertices;
-    Ecount ecount;
-    Ecount active_ecount;
+    unsigned long ecount;
+    unsigned long active_ecount;
     int *active_edge_idx;
-    Vcount vcount;
-    Vcount active_vcount;
+    unsigned long vcount;
+    unsigned long active_vcount;
     int *active_vertex_idx;
     AdjacencyList* adjlist;
 } NetworkModel;
 
 typedef struct Individual {
     Gene *values;
-    Vcount size;
+    unsigned long size;
     Fitness fitness;
 } Individual;
 
 typedef struct Population {
     Individual* ind;
-    Pcount size;
-    Pcount _memsize;
+    unsigned long size;
+    unsigned long _memsize;
 } Population;
 
 typedef struct Diversity {
@@ -87,18 +85,17 @@ struct ea_parameters {
     char* savefname;
     char* genfname;
     uint8_t random;
-    uint8_t filecheck;
     uint8_t extended_write;
     uint8_t verbose;
     long seed;
     float changelevel;
     // ea
     uint8_t dont_reevaluate;
-    long popsize;
+    unsigned long popsize;
     long tournsize;
     double mutpb;
-    long max_evals;
-    long modelcount;
+    unsigned long max_evals;
+    unsigned long modelcount;
     // ls
     uint8_t do_localsearch;
     long ls_k;
@@ -137,7 +134,6 @@ static struct argp_option options[] =
     {0, 0, 0, 0, "Program parameters"},
     {"verbose", 'v', 0, 0, "Switch on verbose mode (default: no)"},
     {"extended-write", 'e', 0, 0, "Switch on extended fitness mode (default: no). Ignored in case '--write'/'-w' is not given."},
-    {"filecheck", 'f', 0, 0, "Switch on model checking before run (default: no)"},
     {"seed", 's', "SEED", 0, "Seed of the pseudo random number generator for creating models. Important: does not affect RNG of the heuristic (default: current time in ns)"},
     {"changelevel", 'c', "LEVEL", 0, "Sets the amount of change to apply for each consecutive network model. Ignored if '--models'/'-z' is set to 1 (default: 0.05)."},
     {"dont-reevaluate", 'd', 0, 0, "After switching a model, the population is not reevaluated. (default: no). Automatically set if popsize <= (nevals / models) to avoid using all nevals for reevaluation."},
@@ -155,7 +151,6 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
         case 'c': params->changelevel = arg ? atof(arg) : 0.05; break;
         case 'v': params->verbose = 1; break;
         case 'd': params->dont_reevaluate = 1; break;
-        case 'f': params->filecheck = 1; break;
         case 'e': params->extended_write = 1; break;
         case 's': params->seed = arg ? atol(arg) : 42; break;
         case 'p': params->popsize = arg ? atol(arg) : 111; break;
@@ -229,29 +224,6 @@ double double_mean(double *arr, int size)
     return (sum / (double)size);
 }
 
-/*
- * Replace the characters "base" according to a given model sequence number 'netnumber'.
- * Returns a pointer to the new string or NULL in case no base file is given.
- */
-char *replace_model_name(char *base, long netnumber)
-{
-    char newnumber[12];
-    sprintf(newnumber, "%ld", netnumber);
-    //TODO: Buffer Overflow or errors if filenames are much longer
-    static char buffer[1000];
-    char *p;
-
-    if(!(p = strstr(base, "base")))  // Is 'orig' even in 'str'?
-    {
-        printf("ERROR: Please give file in the format \"network_base.csv\" when using \"-z\" or \"-c\" switch\n");
-        return NULL;
-    }
-
-    strncpy(buffer, base, p-base); // Copy characters from 'str' start to 'orig' st$
-    buffer[p-base] = '\0';
-    sprintf(buffer+(p-base), "%s%s", newnumber, p+strlen("base"));
-    return buffer;
-}
 /*
  * Creates an array of n distinct integer values in the range from 0 to size
  */
@@ -332,73 +304,6 @@ void create_diff(NetworkModel* model, struct ea_parameters* params)
             model->active_edge_idx[edge_idx] = model->active_edge_idx[--model->active_ecount];
         }
     }
-}
-
-/*
- * Reads the diff file to a previously given model
- * Returns the number of read diffs (vertices + edges)
- */
-int read_diff_file(NetworkModel* model, const char* fname)
-{
-    // Set all vertices/edges to active
-    // set active edge indices
-    // and increase model ID
-    for(int i=0; i<model->vcount; i++)
-    {
-        model->vertices[i].active = 1;
-        model->active_vertex_idx[i] = i;
-    }
-    for(int i=0; i<model->ecount; i++)
-    {
-        model->edges[i].active = 1;
-        model->active_edge_idx[i] = i;
-    }
-    model->active_ecount = model->ecount;
-    model->active_vcount = model->vcount;
-    model->id += 1;
-
-    // Read diff from file
-    FILE *fp;
-    char* line = NULL;
-    size_t len = 0;
-    ssize_t read;
-    int diffs = 0;
-    fp = fopen(fname, "r");
-    if (fp == NULL)
-        return -1;
-    while((read = getline(&line, &len, fp)) != -1)
-    {
-        char* class = strtok(line, ",");
-        if((*class) == 'E')
-        {
-            int src = atoi(strtok(NULL, ","));
-            int dst = atoi(strtok(NULL, ","));
-            for(int i=0; i<model->ecount; i++)
-            {
-                if(model->edges[i].src == src && model->edges[i].dst == dst)
-                {
-                    model->edges[i].active = 0;
-                    model->active_edge_idx[i] = model->active_edge_idx[model->active_ecount - 1];
-                    model->active_ecount = model->active_ecount - 1;
-                    diffs += 1;
-                    break;
-                }
-            }
-        }
-        else if((*class) == 'V')
-        {
-            int id = atoi(strtok(NULL, ","));
-            model->vertices[id].active = 0;
-            model->active_vertex_idx[id] = model->active_vertex_idx[model->active_vcount - 1];
-            model->active_vcount = model->active_vcount - 1;
-            diffs += 1;
-        }
-        else
-            printf("WARNING: Read line without prefix 'E' or 'V'\n");
-    }
-    fclose(fp);
-    if(line) free(line);
-    return diffs;
 }
 
 /*
@@ -683,8 +588,6 @@ Fitness_ext fitness_ext(Individual *ind, NetworkModel *model)
         if(model->vertices[i].active)
             retval.n_mons += ind->values[i];
     }
-    //retval.edges_weighted = penalty(ind, model);
-    //retval.edges_unweighted = uncovered_edges(ind, model);
     uncovered_edges_and_penalty(ind, model, &retval.edges_unweighted, &retval.edges_weighted);
     retval.fitness = retval.n_mons + retval.edges_weighted;
     retval.vcount = active_nodes(model);
@@ -813,8 +716,9 @@ void print_config(struct ea_parameters *params)
     printf("\tMax evals:\t\t%ld\n", params->max_evals);
     printf("\tModel count:\t\t%ld\n", params->modelcount);
     printf("\tVerbose:\t\t%s\n", params->verbose ? "yes" : "no");
-    printf("\tFilecheck:\t\t%s\n", params->filecheck ? "yes" : "no");
     printf("\tDon't reevaluate:\t%s\n", params->dont_reevaluate ? "yes" : "no");
+    printf("\tSeed:\t\t%ld\n", params->seed);
+    printf("\tChangelevel:\t%f\n", params->changelevel);
     printf("\tLocalsearch:\t\t%s\n", params->do_localsearch ? "yes" : "no");
     if(params->do_localsearch)
         printf("\tLocalsearch k-value:\t%ld\n", params->ls_k );
@@ -899,7 +803,6 @@ int tournament_selection(Population *pop, int tournsize)
     return best;
 }
 
-
 /*
  * Calculates and returns the mean of the fitness of population 'pop' of size 'size'.
  */
@@ -939,7 +842,6 @@ double population_fitness_max(Population *pop)
     return max;
 }
 
-
 /*
  * Calculates mean of an arbitrary double array
  */
@@ -950,8 +852,6 @@ double fitness_mean(double *arr, int size)
         sum += arr[i];
     return (sum / (double)size);
 }
-
-
 
 /*
  * Calculates the standard deviation of an arbitrary double array
@@ -1032,43 +932,6 @@ int cleanup(Population *pop, NetworkModel *model, Fitness *fitvals, Diversity *d
 }
 
 /*
- * Performs check if all necessary files are present (from basefile_0 to basefile_[changes])
- * Returns 1 if all files are accessible and have a proper format, -1 otherwise
- */
-int check_model_files(struct ea_parameters* params)
-{
-    NetworkModel base;
-    if(read_base_file(&base, params->inputfname) == -1)
-    {
-        if(params->verbose)
-            printf("ERROR: Reading file \"%s\" failed!\n", params->inputfname);
-        free_model(&base);
-        return -1;
-    }
-    if(params->modelcount > 1)
-    {
-        for(int i=0; i<params->modelcount; i++)
-        {
-            char* fname = replace_model_name(params->inputfname, i);
-            if(!fname)
-            {
-                free_model(&base);
-                return -1;
-            }
-            if(read_diff_file(&base, fname) == -1)
-            {
-                if(params->verbose)
-                    printf("ERROR: Reading file \"%s\" failed!\n", fname);
-                free_model(&base);
-                return -1;
-            }
-        }
-    }
-    free_model(&base);
-    return 1;
-}
-
-/*
  * Checks whether a model change occurs or not.
  * If yes, changes to the new model and also resets the countdown to the value calculated
  * from the provided parameters.
@@ -1079,13 +942,6 @@ int decrement_change_countdown(long* countdown, NetworkModel* model, struct ea_p
 {
     if(!--(*countdown))
     {
-        /*
-           if(read_diff_file(model, replace_model_name(params->inputfname, model->id+1)) == -1)
-           {
-           printf("ERROR: reading file '%s' failed, aborting...\n", replace_model_name(params->inputfname, model->id));
-           exit(EXIT_FAILURE);
-           }
-           */
         create_diff(model, params);
         if(params->verbose)
         {
@@ -1185,17 +1041,6 @@ int run_default(struct ea_parameters* params)
 {
     long nevals = 0;
     long change_countdown = (long)(params->max_evals / params->modelcount) + 1;
-    //char* current_model_fname = params->inputfname;
-    /*
-       if(params->filecheck)
-       {
-       if(check_model_files(params) == -1)
-       {
-       printf("ERROR: not all files are present, aborting!\n");
-       exit(EXIT_FAILURE);
-       }
-       }
-       */
     NetworkModel model;
     if(read_base_file(&model, params->inputfname) == -1)
     {
@@ -1209,8 +1054,6 @@ int run_default(struct ea_parameters* params)
     }
     if(params->modelcount > 1)
     {
-        //current_model_fname = replace_model_name(params->inputfname, 0);
-        //read_diff_file(&model, current_model_fname);
         create_diff(&model, params);
     }
     if(params->verbose)
@@ -1590,15 +1433,6 @@ int run_default(struct ea_parameters* params)
 int run_random(struct ea_parameters* params)
 {
     long change_countdown = (long)(params->max_evals / params->modelcount) + 1;
-    //char* current_model_fname = params->inputfname;
-    if(params->filecheck && params->modelcount > 1)
-    {    
-        if(check_model_files(params) == -1)
-        {
-            printf("ERROR: not all files are present, aborting!\n");
-            exit(EXIT_FAILURE);
-        }
-    }
     NetworkModel model;
     if(read_base_file(&model, params->inputfname) == -1)
     {
@@ -1612,8 +1446,6 @@ int run_random(struct ea_parameters* params)
     }
     if(params->modelcount > 1)
     {
-        //current_model_fname = replace_model_name(params->inputfname, 0);
-        //read_diff_file(&model, current_model_fname);
         create_diff(&model, params);
     }
     if(params->verbose)
@@ -1644,6 +1476,7 @@ int run_random(struct ea_parameters* params)
             else
                 fitvals[i] = ind.fitness;
         }
+        free_individual(&ind);
     }
     if(params->savefname)
     {
@@ -1661,9 +1494,14 @@ int run_random(struct ea_parameters* params)
         free(fitvals_ext);
     if(fitvals)
         free(fitvals);
+    free_model(&model);
     return 0;
 }
 
+int check_parameters(struct ea_parameters* params)
+{
+    return 1;
+}
 
 int main(int argc, char**argv)
 {
@@ -1678,7 +1516,6 @@ int main(int argc, char**argv)
     params.max_evals = 100000;
     params.modelcount = 1;
     params.verbose = 0;
-    params.filecheck = 0;
     params.dont_reevaluate = 0;
     params.do_localsearch = 0;
     params.ls_k = 50;
@@ -1691,6 +1528,12 @@ int main(int argc, char**argv)
     params.changelevel = 0.05;
 
     argp_parse(&argp, argc, argv, 0, 0, &params);
+
+    if(!check_parameters(&params))
+    {
+        printf("ERROR using the provided parameters, exiting!");
+        return -1;
+    }
     if(!params.random && !params.dont_reevaluate && (params.popsize >= (params.max_evals / params.modelcount)))
     {
         printf("WARNING: Population size is greater than the amount of evaluations in one model change interval, setting '--dont-reevaluate' to true!\nIf not desired, decrease popsize or amount of models!\n");
