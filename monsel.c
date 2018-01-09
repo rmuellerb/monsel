@@ -4,19 +4,24 @@
 #include <time.h>
 #include <math.h>
 #include <argp.h>
+#include <stdint.h>
 #include <unistd.h>
 
 // typedefs and structs
-typedef unsigned char Gene;
+typedef uint8_t Gene;
 typedef long Fitness;
+typedef unsigned long Ecount;
+typedef unsigned long Vcount;
+typedef unsigned long Mcount;
+typedef unsigned long Pcount;
 
 typedef struct Fitness_ext {
     Fitness fitness;
-    long ecount;
-    long vcount;
+    Ecount ecount;
+    Vcount vcount;
     long edges_weighted;
     long edges_unweighted;
-    long n_mons;
+    Vcount n_mons;
 } Fitness_ext;
 
 typedef struct Generation_data {
@@ -29,39 +34,45 @@ typedef struct Generation_data {
 } Generation_data;
 
 typedef struct Vertex {
-    int id;
-    int active;
+    Vcount id;
+    uint8_t active;
 } Vertex;
 
 typedef struct Edge {
-    int src;
-    int dst;
-    int w;
-    int active;
+    Vcount src;
+    Vcount dst;
+    uint8_t w;
+    uint8_t active;
 } Edge;
 
+typedef struct AdjacencyList {
+    long* edge_indices;
+    unsigned int size;
+} AdjacencyList;
+
 typedef struct NetworkModel {
-    long id;
+    Mcount id;
     Edge *edges;
     Vertex *vertices;
-    long ecount;
-    long active_ecount;
-    int *inactive_edge_idx;
-    long vcount;
-    long active_vcount;
-    int *inactive_vertex_idx;
+    Ecount ecount;
+    Ecount active_ecount;
+    int *active_edge_idx;
+    Vcount vcount;
+    Vcount active_vcount;
+    int *active_vertex_idx;
+    AdjacencyList* adjlist;
 } NetworkModel;
 
 typedef struct Individual {
     Gene *values;
-    long size;
+    Vcount size;
     Fitness fitness;
 } Individual;
 
 typedef struct Population {
     Individual* ind;
-    long size;
-    long _memsize;
+    Pcount size;
+    Pcount _memsize;
 } Population;
 
 typedef struct Diversity {
@@ -75,22 +86,24 @@ struct ea_parameters {
     char* inputfname;
     char* savefname;
     char* genfname;
-    int random;
-    int filecheck;
-    int extended_write;
-    int verbose;
+    uint8_t random;
+    uint8_t filecheck;
+    uint8_t extended_write;
+    uint8_t verbose;
+    long seed;
+    float changelevel;
     // ea
-    int dont_reevaluate;
+    uint8_t dont_reevaluate;
     long popsize;
     long tournsize;
     double mutpb;
     long max_evals;
     long modelcount;
     // ls
-    int do_localsearch;
+    uint8_t do_localsearch;
     long ls_k;
     // pi
-    int do_pi;
+    uint8_t do_pi;
     long pi_width;
     double pi_threshold;
     long pi_size;
@@ -118,13 +131,15 @@ static struct argp_option options[] =
     {"ls_k", 'k', "K-VALUE", 0, "localsearch k-parameter (default: 50)"},
     {0, 0, 0, 0, "Population injection parameters"},
     {"pi", 'i', 0, 0, "perform population injection (default: no)"},
-    {"pi-width", 's', "WIDTH", 0, "injection width (default: 3)"},
+    {"pi-width", 'j', "WIDTH", 0, "injection width (default: 3)"},
     {"pi-threshold", 'y', "THRESH", 0, "injection threshold (default: 0)"},
     {"pi-size", 'o', "SIZE", 0, "injection size (default: 100)"},
     {0, 0, 0, 0, "Program parameters"},
     {"verbose", 'v', 0, 0, "Switch on verbose mode (default: no)"},
     {"extended-write", 'e', 0, 0, "Switch on extended fitness mode (default: no). Ignored in case '--write'/'-w' is not given."},
     {"filecheck", 'f', 0, 0, "Switch on model checking before run (default: no)"},
+    {"seed", 's', "SEED", 0, "Seed of the pseudo random number generator for creating models. Important: does not affect RNG of the heuristic (default: current time in ns)"},
+    {"changelevel", 'c', "LEVEL", 0, "Sets the amount of change to apply for each consecutive network model. Ignored if '--models'/'-z' is set to 1 (default: 0.05)."},
     {"dont-reevaluate", 'd', 0, 0, "After switching a model, the population is not reevaluated. (default: no). Automatically set if popsize <= (nevals / models) to avoid using all nevals for reevaluation."},
     {"write", 'w', "FILE", 0, "Fitness value output file (one value per line)"},
     {"gen-write", 'q', "FILE", 0, "Extended fitness value output file for the whole generation (one generation per line using the given FILE)"},
@@ -137,10 +152,12 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
     struct ea_parameters *params = state->input;
     switch(key)
     {
+        case 'c': params->changelevel = arg ? atof(arg) : 0.05; break;
         case 'v': params->verbose = 1; break;
         case 'd': params->dont_reevaluate = 1; break;
         case 'f': params->filecheck = 1; break;
         case 'e': params->extended_write = 1; break;
+        case 's': params->seed = arg ? atol(arg) : 42; break;
         case 'p': params->popsize = arg ? atol(arg) : 111; break;
         case 'w': params->savefname = arg; break;
         case 'q': params->genfname = arg; break;
@@ -150,7 +167,7 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
         case 'l': params->do_localsearch = 1; break;
         case 'k': params->ls_k = arg ? atol(arg) : 0; break;
         case 'i': params->do_pi = 1; break;
-        case 's': params->pi_width = arg ? atol(arg) : 0; break;
+        case 'j': params->pi_width = arg ? atol(arg) : 0; break;
         case 'y': params->pi_threshold = arg ? atof(arg) : 0.0; break;
         case 'o': params->pi_size = arg ? atol(arg) : 0; break;
         case 'z': params->modelcount = arg ? atol(arg) : 0; break;
@@ -278,17 +295,64 @@ long best_individual_idx(Population *pop)
 }
 
 /*
+ * Creates a random diff according to the level of
+ * change given in the parameters.
+ */
+void create_diff(NetworkModel* model, struct ea_parameters* params)
+{
+    // Set all vertices/edges to active set active edge indices and increase model ID
+    long vdiffcount = (int)(model->vcount * params->changelevel);
+    for(int i=0; i<model->vcount; i++)
+    {
+        model->vertices[i].active = 1;
+        model->active_vertex_idx[i] = i;
+    }
+    for(int i=0; i<model->ecount; i++)
+    {
+        model->edges[i].active = 1;
+        model->active_edge_idx[i] = i;
+    }
+    model->id += 1;
+    model->active_ecount = model->ecount;
+    model->active_vcount = model->vcount;
+
+    // Start diffing
+    for(long i=0; i<vdiffcount; i++)
+    {
+        long idx = -1;
+        do{
+            idx = lrand48() % model->vcount;
+        } while(!model->vertices[idx].active); 
+        model->vertices[idx].active = 0;
+        model->active_vertex_idx[idx] = model->active_vertex_idx[--model->active_vcount];
+        for(long j=0; j<model->adjlist[idx].size; j++)
+        {
+            long edge_idx = model->adjlist[idx].edge_indices[j];
+            model->edges[edge_idx].active = 0;
+            model->active_edge_idx[edge_idx] = model->active_edge_idx[--model->active_ecount];
+        }
+    }
+}
+
+/*
  * Reads the diff file to a previously given model
  * Returns the number of read diffs (vertices + edges)
  */
 int read_diff_file(NetworkModel* model, const char* fname)
 {
     // Set all vertices/edges to active
+    // set active edge indices
     // and increase model ID
     for(int i=0; i<model->vcount; i++)
+    {
         model->vertices[i].active = 1;
+        model->active_vertex_idx[i] = i;
+    }
     for(int i=0; i<model->ecount; i++)
+    {
         model->edges[i].active = 1;
+        model->active_edge_idx[i] = i;
+    }
     model->active_ecount = model->ecount;
     model->active_vcount = model->vcount;
     model->id += 1;
@@ -314,7 +378,7 @@ int read_diff_file(NetworkModel* model, const char* fname)
                 if(model->edges[i].src == src && model->edges[i].dst == dst)
                 {
                     model->edges[i].active = 0;
-                    model->inactive_edge_idx[model->ecount - model->active_ecount] = i;
+                    model->active_edge_idx[i] = model->active_edge_idx[model->active_ecount - 1];
                     model->active_ecount = model->active_ecount - 1;
                     diffs += 1;
                     break;
@@ -325,7 +389,7 @@ int read_diff_file(NetworkModel* model, const char* fname)
         {
             int id = atoi(strtok(NULL, ","));
             model->vertices[id].active = 0;
-            model->inactive_vertex_idx[model->vcount - model->active_vcount] = id;
+            model->active_vertex_idx[id] = model->active_vertex_idx[model->active_vcount - 1];
             model->active_vcount = model->active_vcount - 1;
             diffs += 1;
         }
@@ -343,7 +407,7 @@ int read_diff_file(NetworkModel* model, const char* fname)
  * an array of edges containing edge information (src, dst, weight, active) and an array of vertices.
  * Returns the number of lines read or -1 in case of failure
  */
-int read_full_file(NetworkModel *model, const char* fname)
+int read_base_file(NetworkModel *model, const char* fname)
 {
     FILE *fp;
     char * line = NULL;
@@ -369,9 +433,9 @@ int read_full_file(NetworkModel *model, const char* fname)
     vertices = malloc(sizeof(Vertex) * vcount);
     Edge *edges;
     edges = malloc(sizeof(Edge) * ecount);
-    model->inactive_edge_idx = malloc(sizeof(int) * ecount);
-    model->inactive_vertex_idx = malloc(sizeof(int) * vcount);
-
+    model->adjlist = malloc(sizeof(AdjacencyList) * model->vcount);
+    model->active_edge_idx = malloc(sizeof(int) * ecount);
+    model->active_vertex_idx = malloc(sizeof(int) * vcount);
     while ((read = getline(&line, &len, fp)) != -1) {
         char* class = strtok(line, ",");
         if((*class) == 'E')
@@ -392,6 +456,28 @@ int read_full_file(NetworkModel *model, const char* fname)
 
     model->edges = edges;
     model->vertices = vertices;
+    for(long i=0; i<model->vcount; i++)
+        model->active_vertex_idx[i] = i;
+    for(long i=0; i<model->ecount; i++)
+        model->active_edge_idx[i] = i;
+    
+    // build adjacencylist
+    for(long i=0; i<model->vcount; i++)
+    {
+        int adjcount = 0;
+        long adjidx[model->ecount];
+        for(long j=0; j<model->ecount; j++)
+        {
+            if(model->edges[j].src == i || model->edges[j].dst == i)
+            {
+                adjidx[adjcount++] = j;
+            }
+        }
+        model->adjlist[i].edge_indices = malloc(sizeof(long) * adjcount);
+        for(long j=0; j<adjcount; j++)
+            model->adjlist[i].edge_indices[j] = adjidx[j];
+        model->adjlist[i].size = adjcount;
+    }
     fclose(fp);
     if (line) free(line);
     return ecount + vcount;
@@ -555,13 +641,11 @@ int penalty(Individual *ind, NetworkModel *model)
 {
     int pen = 0;
     int factor = 2;
-    for(int i=0; i<model->ecount; i++)
+    for(int i=0; i<model->active_ecount; i++)
     {
-        if(!model->edges[i].active)
-            continue;
-        if(ind->values[model->edges[i].src] == 0 && ind->values[model->edges[i].dst] == 0)
+        if(ind->values[model->edges[model->active_edge_idx[i]].src] == 0 && ind->values[model->edges[model->active_edge_idx[i]].dst] == 0)
         {
-            pen = pen + (factor * model->edges[i].w);
+            pen += factor * model->edges[i].w;
         }
     }
     return pen;
@@ -575,13 +659,11 @@ void uncovered_edges_and_penalty(Individual* ind, NetworkModel *model, long* u_e
     (*u_edges) = 0;
     (*pen) = 0;
     int factor = 2;
-    for(int i=0; i<model->ecount; i++)
+    for(int i=0; i<model->active_ecount; i++)
     {
-        if(!model->edges[i].active)
-            continue;
-        if(ind->values[model->edges[i].src] == 0 && ind->values[model->edges[i].dst] == 0)
+        if(ind->values[model->edges[model->active_edge_idx[i]].src] == 0 && ind->values[model->edges[model->active_edge_idx[i]].dst] == 0)
         {
-            (*pen) += (factor * model->edges[i].w);
+            (*pen) += factor * model->edges[i].w;
             (*u_edges) += 1;
         }
     }
@@ -704,10 +786,15 @@ void free_population(Population *pop)
  */
 void free_model(NetworkModel *model)
 {
+    for(long i=0; i<model->vcount; i++)
+    {
+        free(model->adjlist[i].edge_indices);
+    }
     free(model->edges);
     free(model->vertices);
-    free(model->inactive_edge_idx);
-    free(model->inactive_vertex_idx);
+    free(model->active_edge_idx);
+    free(model->active_vertex_idx);
+    free(model->adjlist);
 }
 
 /*
@@ -919,11 +1006,11 @@ void print_model(NetworkModel *model)
     printf("\t<Ecount>%ld</Ecount>\n", model->ecount);
     printf("\t<Vertices>\n");
     for(int i=0; i<model->vcount; i++)
-        printf("\t\t<Vertex id=%d active=%d />\n", model->vertices[i].id, model->vertices[i].active);
+        printf("\t\t<Vertex id=%ld active=%d />\n", model->vertices[i].id, model->vertices[i].active);
     printf("\t</Vertices>\n");
     printf("\t<Edges>\n");
     for(int i=0; i<model->ecount; i++)
-        printf("\t\t<Edge src=%d dst=%d w=%d active=%d/>\n", model->edges[i].src, model->edges[i].dst, model->edges[i].w, model->edges[i].active);
+        printf("\t\t<Edge src=%ld dst=%ld w=%d active=%d/>\n", model->edges[i].src, model->edges[i].dst, model->edges[i].w, model->edges[i].active);
     printf("\t</Edges>\n");
     printf("</NetworkModel>\n");
 }
@@ -951,7 +1038,7 @@ int cleanup(Population *pop, NetworkModel *model, Fitness *fitvals, Diversity *d
 int check_model_files(struct ea_parameters* params)
 {
     NetworkModel base;
-    if(read_full_file(&base, params->inputfname) == -1)
+    if(read_base_file(&base, params->inputfname) == -1)
     {
         if(params->verbose)
             printf("ERROR: Reading file \"%s\" failed!\n", params->inputfname);
@@ -992,14 +1079,17 @@ int decrement_change_countdown(long* countdown, NetworkModel* model, struct ea_p
 {
     if(!--(*countdown))
     {
-        if(read_diff_file(model, replace_model_name(params->inputfname, model->id+1)) == -1)
-        {
-            printf("ERROR: reading file '%s' failed, aborting...\n", replace_model_name(params->inputfname, model->id));
-            exit(EXIT_FAILURE);
-        }
+        /*
+           if(read_diff_file(model, replace_model_name(params->inputfname, model->id+1)) == -1)
+           {
+           printf("ERROR: reading file '%s' failed, aborting...\n", replace_model_name(params->inputfname, model->id));
+           exit(EXIT_FAILURE);
+           }
+           */
+        create_diff(model, params);
         if(params->verbose)
         {
-            printf("Read file '%s' having |V| = %ld (%ld active), |E| = %ld @ %ld evals\n", replace_model_name(params->inputfname, model->id), model->vcount, model->active_vcount, model->ecount, nevals);
+            printf("Created diff having %ld/%ld active |V| and %ld/%ld active |E| @ %ld evals\n", model->active_vcount, model->vcount, model->active_ecount, model->ecount, nevals);
         }
         (*countdown) = (long) (params->max_evals / params->modelcount);
         return 1;
@@ -1095,17 +1185,19 @@ int run_default(struct ea_parameters* params)
 {
     long nevals = 0;
     long change_countdown = (long)(params->max_evals / params->modelcount) + 1;
-    char* current_model_fname = params->inputfname;
-    if(params->filecheck)
-    {
-        if(check_model_files(params) == -1)
-        {
-            printf("ERROR: not all files are present, aborting!\n");
-            exit(EXIT_FAILURE);
-        }
-    }
+    //char* current_model_fname = params->inputfname;
+    /*
+       if(params->filecheck)
+       {
+       if(check_model_files(params) == -1)
+       {
+       printf("ERROR: not all files are present, aborting!\n");
+       exit(EXIT_FAILURE);
+       }
+       }
+       */
     NetworkModel model;
-    if(read_full_file(&model, params->inputfname) == -1)
+    if(read_base_file(&model, params->inputfname) == -1)
     {
         printf("Error reading file '%s', aborting\n", params->inputfname);
         exit(EXIT_FAILURE);
@@ -1117,13 +1209,14 @@ int run_default(struct ea_parameters* params)
     }
     if(params->modelcount > 1)
     {
-        current_model_fname = replace_model_name(params->inputfname, 0);
-        read_diff_file(&model, current_model_fname);
+        //current_model_fname = replace_model_name(params->inputfname, 0);
+        //read_diff_file(&model, current_model_fname);
+        create_diff(&model, params);
     }
     if(params->verbose)
     {
         print_config(params);
-        printf("Read file '%s' having |V| = %ld (%ld active), |E| = %ld @ %d evals\n", current_model_fname, model.vcount, model.active_vcount, model.ecount, 0);
+        printf("Read file '%s' having |V| = %ld (%ld active), |E| = %ld (%ld active) @ %d evals\n", params->inputfname, model.vcount, model.active_vcount, model.ecount, model.active_ecount, 0);
     }
 
     Fitness *fitvals = NULL;
@@ -1497,7 +1590,7 @@ int run_default(struct ea_parameters* params)
 int run_random(struct ea_parameters* params)
 {
     long change_countdown = (long)(params->max_evals / params->modelcount) + 1;
-    char* current_model_fname = params->inputfname;
+    //char* current_model_fname = params->inputfname;
     if(params->filecheck && params->modelcount > 1)
     {    
         if(check_model_files(params) == -1)
@@ -1507,7 +1600,7 @@ int run_random(struct ea_parameters* params)
         }
     }
     NetworkModel model;
-    if(read_full_file(&model, params->inputfname) == -1)
+    if(read_base_file(&model, params->inputfname) == -1)
     {
         printf("Error reading file '%s', aborting\n", params->inputfname);
         exit(EXIT_FAILURE);
@@ -1519,13 +1612,14 @@ int run_random(struct ea_parameters* params)
     }
     if(params->modelcount > 1)
     {
-        current_model_fname = replace_model_name(params->inputfname, 0);
-        read_diff_file(&model, current_model_fname);
+        //current_model_fname = replace_model_name(params->inputfname, 0);
+        //read_diff_file(&model, current_model_fname);
+        create_diff(&model, params);
     }
     if(params->verbose)
     {
         print_config(params);
-        printf("Read file '%s' having |V| = %ld (%ld active), |E| = %ld @ %d evals\n", current_model_fname, model.vcount, model.active_vcount, model.ecount, 0);
+        printf("Read file '%s' having |V| = %ld (%ld active), |E| = %ld @ %d evals\n", params->inputfname, model.vcount, model.active_vcount, model.ecount, 0);
     }
     time_t run_start_time = time(NULL);
     Fitness* fitvals = NULL;
@@ -1573,7 +1667,6 @@ int run_random(struct ea_parameters* params)
 
 int main(int argc, char**argv)
 {
-    srand(time(NULL));
     struct ea_parameters params;
     params.inputfname = NULL;
     params.savefname = NULL;
@@ -1594,6 +1687,8 @@ int main(int argc, char**argv)
     params.pi_threshold = 0.0;
     params.pi_size = 100;
     params.random = 0;
+    params.seed = time(NULL);
+    params.changelevel = 0.05;
 
     argp_parse(&argp, argc, argv, 0, 0, &params);
     if(!params.random && !params.dont_reevaluate && (params.popsize >= (params.max_evals / params.modelcount)))
@@ -1603,6 +1698,8 @@ int main(int argc, char**argv)
         fflush(stdout);
         sleep(2);
     }
+    srand(time(NULL));
+    srand48(params.seed);
     if(params.random)
         return run_random(&params);
     else
