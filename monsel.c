@@ -110,7 +110,7 @@ struct ea_parameters {
 
 Fitness fitness(Individual *ind, NetworkModel *model);
 
-const char *argp_program_version = "0.7";
+const char *argp_program_version = "0.9";
 const char *argp_program_bug_address = "<mueller-bady@linux.com>";
 static char doc[] = "Program to run (LS + PI) EA experiments and writing fitness value to given outputfile. \nThe inputfiles are given as base file (format: [E,src,dst,w] and [V,id]) and the diff files containing ids (nodes) or src and dst (edges) of elements being inactive.\nIf only one file is given and parameter '--models / -z' is set to one, only the base file is used.";
 static char args_doc[] = "[network.csv]";
@@ -1428,7 +1428,6 @@ int run_default(struct ea_parameters* params)
 /*
  * Runs the fully random version of the monitor selection optimizer.
  * WARNING: This does only pick random individuals without any optimization!
- * TODO: Integrate decrement_change_countdown
  */
 int run_random(struct ea_parameters* params)
 {
@@ -1500,7 +1499,112 @@ int run_random(struct ea_parameters* params)
 
 int check_parameters(struct ea_parameters* params)
 {
-    return 1;
+    int retval = 1;
+    
+    // inputfname
+    FILE *fp = fopen(params->inputfname, "r");
+    if(fp == NULL)
+    {
+        printf("Could not open file '%s'\n", params->inputfname);
+        retval = -1;
+    }
+    fclose(fp);
+
+    //savefname
+    if(params->savefname)
+    {
+        fp = fopen(params->savefname, "w");
+        if(fp == NULL)
+        {
+            printf("Could not open file '%s'\n", params->savefname);
+            retval = 0;
+        }
+        fclose(fp);
+    }
+    
+    // genfname
+    if(params->genfname)
+    {
+        fp = fopen(params->genfname, "w");
+        if(fp == NULL)
+        {
+            printf("Could not open file '%s'\n", params->genfname);
+            retval = 0;
+        }
+        fclose(fp);
+    }
+    // extended write
+    if(params->extended_write && !params->savefname)
+    {
+        printf("Extended write set without specifiying savefilename\n");
+        retval = 0;
+    }
+    // popsize
+    if(params->popsize > params->max_evals)
+    {
+        printf("Popsize larger than maximum number of evaluations\n");
+        retval = 0;
+    }
+    //tournsize
+    if(params->tournsize < 1 || params->tournsize > params->max_evals)
+    {
+        printf("Tournsize must be between 1 and maximum number of evaluations\n");
+        retval = 0;
+    }
+    // mutpb
+    if(params->mutpb < 0 || params->mutpb > 1)
+    {
+        printf("mutpb must be between 0 and 1\n");
+        retval = 0;
+    }
+    // modelcount
+    if(params->modelcount > params->max_evals || params->modelcount < 1)
+    {
+        printf("modelcount must be between 1 and maximum number of evaluations\n");
+        retval = 0;
+    }
+    // pi width
+    if(params->pi_width < 1 || params->pi_width > (params->max_evals / params->popsize))
+    {
+        printf("PI width must be between 1 and (maximum evaluations / popsize)\n");
+        retval = 0;
+    }
+    // pi threshold
+    if(params->pi_threshold < 0 || params->pi_threshold > 1)
+    {
+        printf("PI threshold must be between 0 and 1\n");
+        retval = 0;
+    }
+    // pi size
+    if(params->pi_size < 1 || params->pi_size > params->max_evals)
+    {
+        printf("PI size mus be between 1 and the maximum number of evaluations\n");
+        retval = 0;
+    }
+    // changelevel
+    if(params->changelevel < 0 || params->changelevel > 1)
+    {
+        printf("Change level must be between 0 and 1\n");
+        retval = 0;
+    }
+    // random
+    if(params->random && params->genfname)
+    {
+        printf("Random not compatible with parameter genfname\n");
+        retval = 0;
+    }
+    if(params->random && params->do_pi)
+    {
+        printf("Random not compatible with population injection\n");
+        retval = 0;
+    }
+    if(params->random && params->do_localsearch)
+    {
+        printf("Random not compatible with localsearch\n");
+        retval = 0;
+    }
+
+    return retval;
 }
 
 int main(int argc, char**argv)
@@ -1531,7 +1635,7 @@ int main(int argc, char**argv)
 
     if(!check_parameters(&params))
     {
-        printf("ERROR using the provided parameters, exiting!");
+        printf("ERROR using the provided parameters, see explanation before. Exiting.\n");
         return -1;
     }
     if(!params.random && !params.dont_reevaluate && (params.popsize >= (params.max_evals / params.modelcount)))
