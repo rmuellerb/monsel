@@ -1,3 +1,3 @@
 #!/usr/bin/fish
 
-gcc monsel.c -O0 -lm -g -Wall -o monsel
+gcc -xc -std=c11 -O2 -g -Wall -o monsel monsel.c main.c tuning.c -lm
